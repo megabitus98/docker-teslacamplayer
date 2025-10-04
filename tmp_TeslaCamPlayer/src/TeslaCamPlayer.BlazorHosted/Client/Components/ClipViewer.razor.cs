@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
-using MudBlazor;
+using System.Collections.Generic;
+using System.Linq;
 using System.Timers;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 using TeslaCamPlayer.BlazorHosted.Client.Models;
@@ -20,7 +21,66 @@ public partial class ClipViewer : ComponentBase, IDisposable
         LeftPillar,
         RightPillar
     }
-    private static readonly TimeSpan TimelineScrubTimeout = TimeSpan.FromSeconds(2);
+    private sealed class TileDefinition
+    {
+        private readonly Func<ClipVideoSegment, VideoFile> _segmentSelector;
+        private readonly Func<CameraFilterValues, bool> _isEnabledPredicate;
+
+        public TileDefinition(
+            Tile tile,
+            string label,
+            string dataCamera,
+            string videoKey,
+            Func<ClipVideoSegment, VideoFile> segmentSelector,
+            Func<CameraFilterValues, bool> isEnabledPredicate)
+        {
+            Tile = tile;
+            Label = label;
+            DataCamera = dataCamera;
+            VideoKey = videoKey;
+            _segmentSelector = segmentSelector;
+            _isEnabledPredicate = isEnabledPredicate;
+        }
+
+        public Tile Tile { get; }
+        public string Label { get; }
+        public string DataCamera { get; }
+        public string VideoKey { get; }
+        public VideoPlayer Player { get; set; }
+
+        public string SourceFor(ClipVideoSegment segment)
+            => _segmentSelector?.Invoke(segment)?.Url;
+
+        public bool IsEnabled(CameraFilterValues filter)
+            => _isEnabledPredicate?.Invoke(filter) ?? true;
+    }
+
+    private readonly TileDefinition[] _tiles;
+    private readonly Dictionary<Tile, TileDefinition> _tileLookup;
+    private static readonly Tile[] TimeSourcePriority = new[]
+    {
+        Tile.Front,
+        Tile.Back,
+        Tile.LeftRepeater,
+        Tile.RightRepeater,
+        Tile.LeftPillar,
+        Tile.RightPillar
+    };
+
+    public ClipViewer()
+    {
+        _tiles = new[]
+        {
+            new TileDefinition(Tile.LeftPillar, "Left Pillar", "left-pillar", "L-BPILLAR", segment => segment?.CameraLeftBPillar, filter => filter.ShowLeftPillar),
+            new TileDefinition(Tile.Front, "Front", "front", "128D7AB3", segment => segment?.CameraFront, filter => filter.ShowFront),
+            new TileDefinition(Tile.RightPillar, "Right Pillar", "right-pillar", "R-BPILLAR", segment => segment?.CameraRightBPillar, filter => filter.ShowRightPillar),
+            new TileDefinition(Tile.LeftRepeater, "Left Repeater", "left-repeater", "D1916B24", segment => segment?.CameraLeftRepeater, filter => filter.ShowLeftRepeater),
+            new TileDefinition(Tile.Back, "Back", "back", "66EC38D4", segment => segment?.CameraBack, filter => filter.ShowBack),
+            new TileDefinition(Tile.RightRepeater, "Right Repeater", "right-repeater", "87B15DCA", segment => segment?.CameraRightRepeater, filter => filter.ShowRightRepeater)
+        };
+
+        _tileLookup = _tiles.ToDictionary(t => t.Tile);
+    }
 
     [Inject]
     public IJSRuntime JsRuntime { get; set; }
@@ -43,16 +103,9 @@ public partial class ClipViewer : ComponentBase, IDisposable
     }
 
     private Clip _clip;
-    private VideoPlayer _videoPlayerFront;
-    private VideoPlayer _videoPlayerLeftRepeater;
-    private VideoPlayer _videoPlayerRightRepeater;
-    private VideoPlayer _videoPlayerBack;
-    private VideoPlayer _videoPlayerLeftBPillar;
-    private VideoPlayer _videoPlayerRightBPillar;
     private int _videoLoadedEventCount = 0;
     private bool _isPlaying;
     private ClipVideoSegment _currentSegment;
-    private MudSlider<double> _timelineSlider;
     private double _timelineMaxSeconds;
     private double _ignoreTimelineValue;
     private bool _wasPlayingBeforeScrub;
@@ -60,7 +113,6 @@ public partial class ClipViewer : ComponentBase, IDisposable
     private double _timelineValue;
     private System.Timers.Timer _setVideoTimeDebounceTimer;
     private CancellationTokenSource _loadSegmentCts = new();
-    private string mainVideoKey;
     private CameraFilterValues _lastAppliedCameraFilter = new();
     private Tile? _fullscreenTile = null; // null = grid view, otherwise one of the Tile enum values
     private DotNetObjectReference<ClipViewer> _objRef;
@@ -80,30 +132,12 @@ public partial class ClipViewer : ComponentBase, IDisposable
             return;
 
         _objRef = DotNetObjectReference.Create(this);
-
-        if (_videoPlayerFront != null)
+        foreach (var tile in _tiles)
         {
-            _videoPlayerFront.Loaded += () => { _videoLoadedEventCount++; };
-        }
-        if (_videoPlayerLeftRepeater != null)
-        {
-            _videoPlayerLeftRepeater.Loaded += () => { _videoLoadedEventCount++; };
-        }
-        if (_videoPlayerRightRepeater != null)
-        {
-            _videoPlayerRightRepeater.Loaded += () => { _videoLoadedEventCount++; };
-        }
-        if (_videoPlayerBack != null)
-        {
-            _videoPlayerBack.Loaded += () => { _videoLoadedEventCount++; };
-        }
-        if (_videoPlayerLeftBPillar != null)
-        {
-            _videoPlayerLeftBPillar.Loaded += () => { _videoLoadedEventCount++; };
-        }
-        if (_videoPlayerRightBPillar != null)
-        {
-            _videoPlayerRightBPillar.Loaded += () => { _videoLoadedEventCount++; };
+            if (tile.Player != null)
+            {
+                tile.Player.Loaded += () => { _videoLoadedEventCount++; };
+            }
         }
     }
 
@@ -166,114 +200,30 @@ public partial class ClipViewer : ComponentBase, IDisposable
 
         _currentSegment = _clip.Segments.First();
         await SetCurrentSegmentVideosAsync();
-
-        if (clip?.Event?.Camera == null)
-        { mainVideoKey = "128D7AB3"; }
-        else
-        { mainVideoKey = CameraToVideoKey(_clip.Event.Camera); }
     }
 
     private async Task EnsurePlayersReadyAsync()
     {
         var sw = Stopwatch.StartNew();
-        while ((_videoPlayerFront == null ||
-                _videoPlayerBack == null ||
-                _videoPlayerLeftRepeater == null ||
-                _videoPlayerRightRepeater == null ||
-                _videoPlayerLeftBPillar == null ||
-                _videoPlayerRightBPillar == null) && sw.Elapsed < TimeSpan.FromSeconds(5))
+        while (_tiles.Any(t => t.Player == null) && sw.Elapsed < TimeSpan.FromSeconds(5))
         {
             try { await InvokeAsync(StateHasChanged); } catch { }
             await Task.Delay(10);
         }
     }
 
-    private void SwitchMainVideo(string newMainVideoKey)
-    {
-        mainVideoKey = newMainVideoKey;
-    }
-
-    private string CameraToVideoKey(Cameras camera)
-    {
-        switch (camera)
-        {
-            case Cameras.Front:
-                return "128D7AB3";
-            case Cameras.RightRepeater:
-            case Cameras.RightBPillar:
-                return "87B15DCA";
-            case Cameras.Back:
-                return "66EC38D4";
-            case Cameras.LeftRepeater:
-            case Cameras.LeftBPillar:
-                return "D1916B24";
-            default:
-                return "128D7AB3";
-        }
-    }
-
-
-    private string GetVideoClass(string videoKey)
-    {
-        if (videoKey == mainVideoKey)
-            return "video main-video";
-        else
-        {
-            return videoKey switch
-            {
-                "128D7AB3" => "video small-video top-left-video",
-                "66EC38D4" => "video small-video top-right-video",
-                "D1916B24" => "video small-video bottom-left-video",
-                "87B15DCA" => "video small-video bottom-right-video",
-                _ => ""
-            };
-        }
-    }
-
-    private string GetPlayerClass(string videoKey)
-    {
-        return videoKey == mainVideoKey ? "video main-video" : "video small-video-style";
-    }
-
-    private bool IsTileEnabled(Tile tile)
-    {
-        return tile switch
-        {
-            Tile.Front => CameraFilter.ShowFront,
-            Tile.Back => CameraFilter.ShowBack,
-            Tile.LeftRepeater => CameraFilter.ShowLeftRepeater,
-            Tile.RightRepeater => CameraFilter.ShowRightRepeater,
-            Tile.LeftPillar => CameraFilter.ShowLeftPillar,
-            Tile.RightPillar => CameraFilter.ShowRightPillar,
-            _ => true
-        };
-    }
-
     private bool IsTileVisible(Tile tile)
     {
-        bool hasSrc = tile switch
-        {
-            Tile.Front => !string.IsNullOrWhiteSpace(_videoPlayerFront?.Src),
-            Tile.Back => !string.IsNullOrWhiteSpace(_videoPlayerBack?.Src),
-            Tile.LeftRepeater => !string.IsNullOrWhiteSpace(_videoPlayerLeftRepeater?.Src),
-            Tile.RightRepeater => !string.IsNullOrWhiteSpace(_videoPlayerRightRepeater?.Src),
-            Tile.LeftPillar => !string.IsNullOrWhiteSpace(_videoPlayerLeftBPillar?.Src),
-            Tile.RightPillar => !string.IsNullOrWhiteSpace(_videoPlayerRightBPillar?.Src),
-            _ => false
-        };
-        return IsTileEnabled(tile) && hasSrc;
+        if (!_tileLookup.TryGetValue(tile, out var definition))
+            return false;
+
+        var hasSrc = !string.IsNullOrWhiteSpace(definition.Player?.Src);
+        return definition.IsEnabled(CameraFilter) && hasSrc;
     }
 
     private int VisibleTileCount()
     {
-        int count = 0;
-        if (IsTileVisible(Tile.LeftPillar)) count++;
-        if (IsTileVisible(Tile.Front)) count++;
-        if (IsTileVisible(Tile.RightPillar)) count++;
-        if (IsTileVisible(Tile.LeftRepeater)) count++;
-        if (IsTileVisible(Tile.Back)) count++;
-        if (IsTileVisible(Tile.RightRepeater)) count++;
-        return count;
+        return _tiles.Count(tile => IsTileVisible(tile.Tile));
     }
 
     private string GridStyle()
@@ -317,12 +267,10 @@ public partial class ClipViewer : ComponentBase, IDisposable
             await TogglePlayingAsync(false);
 
         // Always load sources based on current segment; filtering only affects visibility, not source assignment.
-        SetSrcIfChanged(_videoPlayerFront, _currentSegment.CameraFront?.Url);
-        SetSrcIfChanged(_videoPlayerBack, _currentSegment.CameraBack?.Url);
-        SetSrcIfChanged(_videoPlayerLeftRepeater, _currentSegment.CameraLeftRepeater?.Url);
-        SetSrcIfChanged(_videoPlayerRightRepeater, _currentSegment.CameraRightRepeater?.Url);
-        SetSrcIfChanged(_videoPlayerLeftBPillar, _currentSegment.CameraLeftBPillar?.Url);
-        SetSrcIfChanged(_videoPlayerRightBPillar, _currentSegment.CameraRightBPillar?.Url);
+        foreach (var tile in _tiles)
+        {
+            SetSrcIfChanged(tile.Player, tile.SourceFor(_currentSegment));
+        }
 
         if (_loadSegmentCts.IsCancellationRequested)
             return false;
@@ -330,8 +278,9 @@ public partial class ClipViewer : ComponentBase, IDisposable
         await InvokeAsync(StateHasChanged);
 
         var timeout = Task.Delay(5000);
-        var cameraCount = new[] { _videoPlayerFront.Src, _videoPlayerLeftRepeater.Src, _videoPlayerRightRepeater.Src, _videoPlayerBack.Src, _videoPlayerLeftBPillar.Src, _videoPlayerRightBPillar.Src }
-            .Count(s => !string.IsNullOrWhiteSpace(s));
+        var cameraCount = _tiles
+            .Select(tile => tile.Player?.Src)
+            .Count(src => !string.IsNullOrWhiteSpace(src));
         var completedTask = await Task.WhenAny(Task.Run(async () =>
         {
             while (_videoLoadedEventCount < cameraCount && !_loadSegmentCts.IsCancellationRequested)
@@ -354,12 +303,11 @@ public partial class ClipViewer : ComponentBase, IDisposable
     {
         try
         {
-            if (_videoPlayerFront != null) await action(_videoPlayerFront);
-            if (_videoPlayerBack != null) await action(_videoPlayerBack);
-            if (_videoPlayerLeftRepeater != null) await action(_videoPlayerLeftRepeater);
-            if (_videoPlayerRightRepeater != null) await action(_videoPlayerRightRepeater);
-            if (_videoPlayerLeftBPillar != null) await action(_videoPlayerLeftBPillar);
-            if (_videoPlayerRightBPillar != null) await action(_videoPlayerRightBPillar);
+            foreach (var tile in _tiles)
+            {
+                if (tile.Player != null)
+                    await action(tile.Player);
+            }
         }
         catch
         {
@@ -478,56 +426,15 @@ public partial class ClipViewer : ComponentBase, IDisposable
 
     private VideoPlayer GetActiveTimeSourcePlayer()
     {
-        // Prefer a stable ordering for time source in 6-up grid
-        if (!string.IsNullOrWhiteSpace(_videoPlayerFront?.Src)) return _videoPlayerFront;
-        if (!string.IsNullOrWhiteSpace(_videoPlayerBack?.Src)) return _videoPlayerBack;
-        if (!string.IsNullOrWhiteSpace(_videoPlayerLeftRepeater?.Src)) return _videoPlayerLeftRepeater;
-        if (!string.IsNullOrWhiteSpace(_videoPlayerRightRepeater?.Src)) return _videoPlayerRightRepeater;
-        if (!string.IsNullOrWhiteSpace(_videoPlayerLeftBPillar?.Src)) return _videoPlayerLeftBPillar;
-        if (!string.IsNullOrWhiteSpace(_videoPlayerRightBPillar?.Src)) return _videoPlayerRightBPillar;
-        return null;
-    }
-
-    private string GetLeftCameraUrl()
-    {
-        var allowRepeater = CameraFilter.ShowLeftRepeater;
-        var allowPillar = CameraFilter.ShowLeftPillar;
-
-        if (!allowRepeater && !allowPillar)
-            return null;
-
-        // Prefer pillar when both are selected, else whichever is allowed
-        if (allowPillar && _currentSegment.CameraLeftBPillar?.Url != null)
-            return _currentSegment.CameraLeftBPillar.Url;
-        if (allowRepeater && _currentSegment.CameraLeftRepeater?.Url != null)
-            return _currentSegment.CameraLeftRepeater.Url;
-
-        // Fallback to the other if preferred is missing
-        if (allowRepeater)
-            return _currentSegment.CameraLeftRepeater?.Url;
-        if (allowPillar)
-            return _currentSegment.CameraLeftBPillar?.Url;
-
-        return null;
-    }
-
-    private string GetRightCameraUrl()
-    {
-        var allowRepeater = CameraFilter.ShowRightRepeater;
-        var allowPillar = CameraFilter.ShowRightPillar;
-
-        if (!allowRepeater && !allowPillar)
-            return null;
-
-        if (allowPillar && _currentSegment.CameraRightBPillar?.Url != null)
-            return _currentSegment.CameraRightBPillar.Url;
-        if (allowRepeater && _currentSegment.CameraRightRepeater?.Url != null)
-            return _currentSegment.CameraRightRepeater.Url;
-
-        if (allowRepeater)
-            return _currentSegment.CameraRightRepeater?.Url;
-        if (allowPillar)
-            return _currentSegment.CameraRightBPillar?.Url;
+        foreach (var tile in TimeSourcePriority)
+        {
+            if (_tileLookup.TryGetValue(tile, out var definition))
+            {
+                var player = definition.Player;
+                if (!string.IsNullOrWhiteSpace(player?.Src))
+                    return player;
+            }
+        }
 
         return null;
     }

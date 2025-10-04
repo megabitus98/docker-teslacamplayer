@@ -7,61 +7,20 @@
             When a tile enters fullscreen, apply class 'fullscreen-active' on the grid and 'is-fullscreen' on the active tile.
         -->
         <div class="video-grid @(IsFullscreen ? "fullscreen-active" : null)" style="@GridStyle()">
-            <!-- Top row: Pillars + Front -->
-            <div class="grid-tile @GetTileCss(Tile.LeftPillar) @(IsTileVisible(Tile.LeftPillar) ? null : "is-hidden")"
-                 data-camera="left-pillar" data-visible="@(IsTileVisible(Tile.LeftPillar).ToString().ToLower())"
-                 role="button" tabindex="0" aria-label="View Left Pillar fullscreen"
-                 @onclick="@(() => ToggleFullscreen(Tile.LeftPillar))"
-                 @onkeydown="@(e => TileKeyDown(e, Tile.LeftPillar))">
-                <VideoPlayer @key="@("L-BPILLAR")" @ref="_videoPlayerLeftBPillar" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
-                @if (IsTileVisible(Tile.LeftPillar)) { <div class="tile-label">Left Pillar</div> }
-            </div>
-
-            <div class="grid-tile @GetTileCss(Tile.Front) @(IsTileVisible(Tile.Front) ? null : "is-hidden")"
-                 data-camera="front" data-visible="@(IsTileVisible(Tile.Front).ToString().ToLower())"
-                 role="button" tabindex="0" aria-label="View Front fullscreen"
-                 @onclick="@(() => ToggleFullscreen(Tile.Front))"
-                 @onkeydown="@(e => TileKeyDown(e, Tile.Front))">
-                <VideoPlayer @key="@("128D7AB3")" @ref="_videoPlayerFront" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
-                @if (IsTileVisible(Tile.Front)) { <div class="tile-label">Front</div> }
-            </div>
-
-            <div class="grid-tile @GetTileCss(Tile.RightPillar) @(IsTileVisible(Tile.RightPillar) ? null : "is-hidden")"
-                 data-camera="right-pillar" data-visible="@(IsTileVisible(Tile.RightPillar).ToString().ToLower())"
-                 role="button" tabindex="0" aria-label="View Right Pillar fullscreen"
-                 @onclick="@(() => ToggleFullscreen(Tile.RightPillar))"
-                 @onkeydown="@(e => TileKeyDown(e, Tile.RightPillar))">
-                <VideoPlayer @key="@("R-BPILLAR")" @ref="_videoPlayerRightBPillar" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
-                @if (IsTileVisible(Tile.RightPillar)) { <div class="tile-label">Right Pillar</div> }
-            </div>
-
-            <!-- Bottom row: Repeaters + Back -->
-            <div class="grid-tile @GetTileCss(Tile.LeftRepeater) @(IsTileVisible(Tile.LeftRepeater) ? null : "is-hidden")"
-                 data-camera="left-repeater" data-visible="@(IsTileVisible(Tile.LeftRepeater).ToString().ToLower())"
-                 role="button" tabindex="0" aria-label="View Left Repeater fullscreen"
-                 @onclick="@(() => ToggleFullscreen(Tile.LeftRepeater))"
-                 @onkeydown="@(e => TileKeyDown(e, Tile.LeftRepeater))">
-                <VideoPlayer @key="@("D1916B24")" @ref="_videoPlayerLeftRepeater" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
-                @if (IsTileVisible(Tile.LeftRepeater)) { <div class="tile-label">Left Repeater</div> }
-            </div>
-
-            <div class="grid-tile @GetTileCss(Tile.Back) @(IsTileVisible(Tile.Back) ? null : "is-hidden")"
-                 data-camera="back" data-visible="@(IsTileVisible(Tile.Back).ToString().ToLower())"
-                 role="button" tabindex="0" aria-label="View Back fullscreen"
-                 @onclick="@(() => ToggleFullscreen(Tile.Back))"
-                 @onkeydown="@(e => TileKeyDown(e, Tile.Back))">
-                <VideoPlayer @key="@("66EC38D4")" @ref="_videoPlayerBack" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
-                @if (IsTileVisible(Tile.Back)) { <div class="tile-label">Back</div> }
-            </div>
-
-            <div class="grid-tile @GetTileCss(Tile.RightRepeater) @(IsTileVisible(Tile.RightRepeater) ? null : "is-hidden")"
-                 data-camera="right-repeater" data-visible="@(IsTileVisible(Tile.RightRepeater).ToString().ToLower())"
-                 role="button" tabindex="0" aria-label="View Right Repeater fullscreen"
-                 @onclick="@(() => ToggleFullscreen(Tile.RightRepeater))"
-                 @onkeydown="@(e => TileKeyDown(e, Tile.RightRepeater))">
-                <VideoPlayer @key="@("87B15DCA")" @ref="_videoPlayerRightRepeater" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
-                @if (IsTileVisible(Tile.RightRepeater)) { <div class="tile-label">Right Repeater</div> }
-            </div>
+            @foreach (var tile in _tiles)
+            {
+                <div class="grid-tile @GetTileCss(tile.Tile) @(IsTileVisible(tile.Tile) ? null : "is-hidden")"
+                     data-camera="@tile.DataCamera" data-visible="@(IsTileVisible(tile.Tile).ToString().ToLower())"
+                     role="button" tabindex="0" aria-label="View @tile.Label fullscreen"
+                     @onclick="@(() => ToggleFullscreen(tile.Tile))"
+                     @onkeydown="@(e => TileKeyDown(e, tile.Tile))">
+                    <VideoPlayer @key="@tile.VideoKey" @ref="tile.Player" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
+                    @if (IsTileVisible(tile.Tile))
+                    {
+                        <div class="tile-label">@tile.Label</div>
+                    }
+                </div>
+            }
         </div>
 
         @if (IsFullscreen)
@@ -87,7 +46,6 @@
             <div class="current-time-container">@GetCurrentScrubTime()</div>
             <div class="slider-container">
                 <MudSlider T="double"
-                           @ref="_timelineSlider"
                            Max="@_timelineMaxSeconds"
                            Step="0.01"
                            Size="Size.Medium"
