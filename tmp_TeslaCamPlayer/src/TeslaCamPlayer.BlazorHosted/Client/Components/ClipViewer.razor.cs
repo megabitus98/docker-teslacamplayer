@@ -289,7 +289,8 @@ public partial class ClipViewer : ComponentBase, IDisposable
             _ => 3
         };
 
-        return $"grid-template-columns: repeat({cols}, minmax(0, 1fr)); grid-auto-rows: 1fr;";
+        // Use minmax(0, 1fr) so rows can shrink within the container without forcing overflow
+        return $"grid-template-columns: repeat({cols}, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr);";
     }
 
     private string GetCurrentScrubTime()

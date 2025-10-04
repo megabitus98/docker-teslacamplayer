@@ -73,6 +73,8 @@
                 foreach (var child in TreeItems)
                 {
                     child.IsChecked = IsChecked;
+                    // propagate change to underlying filter values for each child
+                    child._isCheckedChangedHandler?.Invoke(IsChecked);
                 }
             }
 
