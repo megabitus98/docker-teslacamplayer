@@ -14,10 +14,12 @@ public class ApiController : ControllerBase
     private readonly IClipsService _clipsService;
     private readonly IRefreshProgressService _refreshProgressService;
     private readonly string _rootFullPath;
+    private readonly bool _enableDelete;
 
     public ApiController(ISettingsProvider settingsProvider, IClipsService clipsService, IRefreshProgressService refreshProgressService)
     {
         _rootFullPath = Path.GetFullPath(settingsProvider.Settings.ClipsRootPath);
+        _enableDelete = settingsProvider.Settings.EnableDelete;
         _clipsService = clipsService;
         _refreshProgressService = refreshProgressService;
     }
@@ -33,9 +35,16 @@ public class ApiController : ControllerBase
     private bool IsUnderRootPath(string path)
         => path.StartsWith(_rootFullPath);
 
+    [HttpGet]
+    public AppConfig GetConfig()
+        => new AppConfig { EnableDelete = _enableDelete };
+
     [HttpDelete]
     public IActionResult DeleteEvent(string path)
     {
+        if (!_enableDelete)
+            return StatusCode(403, "Delete function is disabled");
+
         if (string.IsNullOrEmpty(path) || !IsUnderRootPath(path))
             return BadRequest("Invalid path");
 

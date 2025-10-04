@@ -40,10 +40,13 @@
                     <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
                                    OnClick="@(() => RefreshEventsAsync(true))" />
                 </MudTooltip>
-                <MudTooltip Text="Delete Selected Event">
-                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
-                                   OnClick="@OpenDeleteConfirmationDialog" />
-                </MudTooltip>
+                @if (_enableDelete)
+                {
+                    <MudTooltip Text="Delete Selected Event">
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                       OnClick="@OpenDeleteConfirmationDialog" />
+                    </MudTooltip>
+                }
                 <MudSpacer />
                 <MudIconButton Icon="@Icons.Material.Filled.FilterAlt" Size="Size.Small" OnClick="@ToggleFilter" />
 

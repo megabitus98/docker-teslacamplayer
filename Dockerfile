@@ -53,7 +53,8 @@ LABEL maintainer="megabitus98"
 # environment settings
 ENV ClipsRootPath=/media \
   CacheFilePath=/config/clips.json \
-  ASPNETCORE_URLS=http://+:5000
+  ASPNETCORE_URLS=http://+:5000 \
+  ENABLE_DELETE=true
 
 RUN \
   echo "**** install packages ****" && \

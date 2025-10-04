@@ -17,6 +17,27 @@ public class SettingsProvider : ISettingsProvider
             .AddEnvironmentVariables();
 
         var configuration = builder.Build();
-        return configuration.Get<Settings>();
+        var settings = configuration.Get<Settings>() ?? new Settings();
+
+        // Prefer explicit ENABLE_DELETE env var if present; fallback to config/binder default
+        var enableDeleteEnv = Environment.GetEnvironmentVariable("ENABLE_DELETE");
+        if (!string.IsNullOrWhiteSpace(enableDeleteEnv))
+        {
+            var normalized = enableDeleteEnv.Trim().ToLowerInvariant();
+            settings.EnableDelete = normalized switch
+            {
+                "1" => true,
+                "0" => false,
+                "true" => true,
+                "false" => false,
+                "yes" => true,
+                "no" => false,
+                "on" => true,
+                "off" => false,
+                _ => settings.EnableDelete
+            };
+        }
+
+        return settings;
     }
 }

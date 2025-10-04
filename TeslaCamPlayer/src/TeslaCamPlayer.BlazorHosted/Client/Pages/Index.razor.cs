@@ -37,11 +37,23 @@ public partial class Index : ComponentBase
     private TeslaCamPlayer.BlazorHosted.Client.Models.CameraFilterValues _cameraFilter = new();
     private RefreshStatus _refreshStatus = new();
     private CancellationTokenSource _refreshStatusCts;
+    private bool _enableDelete = true;
 
     protected override async Task OnInitializedAsync()
     {
         _scrollDebounceTimer = new(100);
         _scrollDebounceTimer.Elapsed += ScrollDebounceTimerTick;
+
+        try
+        {
+            var config = await HttpClient.GetFromNewtonsoftJsonAsync<AppConfig>("Api/GetConfig");
+            _enableDelete = config?.EnableDelete ?? true;
+        }
+        catch
+        {
+            // If config fetch fails, default to showing delete (backward compatibility)
+            _enableDelete = true;
+        }
 
         await RefreshEventsAsync(false);
     }
