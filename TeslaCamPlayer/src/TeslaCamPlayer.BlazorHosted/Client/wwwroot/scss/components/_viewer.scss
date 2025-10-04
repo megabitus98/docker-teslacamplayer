@@ -128,19 +128,31 @@
     }
 
     .tile-label {
+        /* Fill the tile as an invisible overlay so the label is always inside */
         position: absolute;
-        left: 8px;
-        bottom: 8px;
-        padding: 2px 6px;
-        font-size: 0.75rem;
-        line-height: 1;
-        color: rgba(255, 255, 255, 0.95);
-        background: rgba(0, 0, 0, 0.45);
-        border-radius: 4px;
-        z-index: 1;
+        inset: 0;
+        display: flex;
+        align-items: flex-end;
+        justify-content: flex-end;
+        padding: 12px;
         pointer-events: none;
-        user-select: none;
-        -webkit-user-select: none;
+        z-index: 2;
+    }
+
+    .tile-label__text {
+        max-width: 100%;
+        padding: 7px 12px;
+        font-size: 0.78rem;
+        line-height: 1.2;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.98);
+        background: rgba(0, 0, 0, 0.55);
+        border-radius: 6px;
+        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: inline-block;
     }
 
     .controls {

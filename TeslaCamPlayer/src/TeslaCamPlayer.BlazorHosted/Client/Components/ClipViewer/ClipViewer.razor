@@ -18,7 +18,7 @@
                     <VideoPlayer @key="@tile.VideoKey" @ref="tile.Player" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
                     @if (IsTileVisible(tile.Tile))
                     {
-                        <div class="tile-label">@tile.Label</div>
+                        <div class="tile-label"><span class="tile-label__text">@tile.Label</span></div>
                     }
                 </div>
             }
