@@ -167,6 +167,7 @@ public class ExportService : IExportService
 
             int outW = request.Width ?? 1920;
             int outH = request.Height ?? 1080;
+
             int cellW = outW / cols;
             int cellH = outH / rows;
 
@@ -248,33 +249,68 @@ public class ExportService : IExportService
                 filter.Append(camOutputs[0]).Append("copy[stacked]");
             }
 
+            // Optional overlays (location bottom-left, timestamp bottom-right)
+            string finalLabel = "stacked";
+
+            if (request.IncludeLocationOverlay)
+            {
+                string BuildLocationText()
+                {
+                    try
+                    {
+                        var evt = clip.Event;
+                        if (evt == null) return null;
+                        var city = (evt.City ?? string.Empty).Trim();
+                        var latStr = (evt.EstLat ?? string.Empty).Trim();
+                        var lonStr = (evt.EstLon ?? string.Empty).Trim();
+                        string coords = null;
+                        if (!string.IsNullOrWhiteSpace(latStr) && !string.IsNullOrWhiteSpace(lonStr))
+                        {
+                            if (double.TryParse(latStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var lat) &&
+                                double.TryParse(lonStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var lon))
+                                coords = $"{lat:0.#####}, {lon:0.#####}";
+                            else
+                                coords = $"{latStr}, {lonStr}";
+                        }
+                        if (!string.IsNullOrWhiteSpace(city) && !string.IsNullOrWhiteSpace(coords)) return $"{city} ({coords})";
+                        if (!string.IsNullOrWhiteSpace(city)) return city;
+                        if (!string.IsNullOrWhiteSpace(coords)) return coords;
+                        return null;
+                    }
+                    catch { return null; }
+                }
+
+                var locationText = BuildLocationText();
+                if (!string.IsNullOrWhiteSpace(locationText))
+                {
+                    var geo = "[geo]";
+                    var locFont = ":fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4";
+                    filter.Append(';')
+                          .Append('[').Append(finalLabel).Append(']')
+                          .Append($"drawtext=text='{EscapeDrawText(locationText)}'{locFont}:x=10:y=h-th-10")
+                          .Append(geo);
+                    finalLabel = "geo";
+                }
+            }
+
             // Timestamp overlay on final output if requested
             if (request.IncludeTimestamp)
             {
-                // Dynamic absolute timestamp: selection start (epoch) + frame time, formatted as local time
-                // Use the user-selected start time, not the event directory time, to align overlay with the export.
                 var startEpoch = new DateTimeOffset(start.ToUniversalTime()).ToUnixTimeSeconds();
                 var ts = "[ts]";
-                // Use setpts to normalize PTS to start at 0, then pts:localtime to add base epoch and format.
                 var tsDrawText = $@"setpts=PTS-STARTPTS,drawtext=text='%{{pts\:localtime\:{startEpoch}\:%Y-%m-%d %X}}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4:x=w-tw-10:y=h-th-10";
                 filter.Append(';')
-                      .Append("[stacked]")
+                      .Append('[').Append(finalLabel).Append(']')
                       .Append(tsDrawText)
                       .Append(ts);
+                finalLabel = "ts";
             }
 
             argv.Add("-filter_complex");
             argv.Add(filter.ToString());
 
             // map final
-            if (request.IncludeTimestamp)
-            {
-                argv.Add("-map"); argv.Add("[ts]");
-            }
-            else
-            {
-                argv.Add("-map"); argv.Add("[stacked]");
-            }
+            argv.Add("-map"); argv.Add($"[{finalLabel}]");
 
             // No audio
             argv.Add("-an");

@@ -22,5 +22,5 @@ public class ExportRequest
     // Overlays
     public bool IncludeTimestamp { get; set; } = true;
     public bool IncludeCameraLabels { get; set; } = true;
+    public bool IncludeLocationOverlay { get; set; } = true;
 }
-

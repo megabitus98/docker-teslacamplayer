@@ -103,7 +103,13 @@ public class ApiController : ControllerBase
         if (!path.StartsWith(exportsRoot)) return BadRequest("Invalid path");
         if (!System.IO.File.Exists(path)) return NotFound();
         var contentType = "application/octet-stream";
-        return PhysicalFile(path, contentType, enableRangeProcessing: true);
+        var fileName = Path.GetFileName(path);
+        var result = new PhysicalFileResult(path, contentType)
+        {
+            EnableRangeProcessing = true,
+            FileDownloadName = fileName
+        };
+        return result;
     }
 
     public class ExportItem

@@ -46,6 +46,7 @@ public partial class Index : ComponentBase
     private string _exportQuality = "medium";
     private bool _exportIncludeTimestamp = true;
     private bool _exportIncludeLabels = true;
+    private bool _exportIncludeLocation = true;
     private string _exportJobId;
     private ExportStatus _exportStatus;
     private CancellationTokenSource _exportPollCts;
@@ -216,6 +217,7 @@ public partial class Index : ComponentBase
             [nameof(ExportSettingsDialog.Quality)] = _exportQuality,
             [nameof(ExportSettingsDialog.IncludeTimestamp)] = _exportIncludeTimestamp,
             [nameof(ExportSettingsDialog.IncludeLabels)] = _exportIncludeLabels,
+            [nameof(ExportSettingsDialog.IncludeLocation)] = _exportIncludeLocation,
         };
 
         var options = new DialogOptions
@@ -237,6 +239,7 @@ public partial class Index : ComponentBase
         _exportQuality = res.Quality;
         _exportIncludeTimestamp = res.IncludeTimestamp;
         _exportIncludeLabels = res.IncludeLabels;
+        _exportIncludeLocation = res.IncludeLocation;
 
         await StartExport();
     }
@@ -277,7 +280,8 @@ public partial class Index : ComponentBase
             Height = h,
             Quality = _exportQuality,
             IncludeTimestamp = _exportIncludeTimestamp,
-            IncludeCameraLabels = _exportIncludeLabels
+            IncludeCameraLabels = _exportIncludeLabels,
+            IncludeLocationOverlay = _exportIncludeLocation
         };
 
         var resp = await HttpClient.PostAsJsonAsync("Api/StartExport", request);
