@@ -4,11 +4,22 @@ using MudBlazor;
 using System.Timers;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 using TeslaCamPlayer.BlazorHosted.Client.Models;
+using Microsoft.AspNetCore.Components.Web;
+using System.Diagnostics;
 
 namespace TeslaCamPlayer.BlazorHosted.Client.Components;
 
-public partial class ClipViewer : ComponentBase
+public partial class ClipViewer : ComponentBase, IDisposable
 {
+    private enum Tile
+    {
+        Front,
+        Back,
+        LeftRepeater,
+        RightRepeater,
+        LeftPillar,
+        RightPillar
+    }
     private static readonly TimeSpan TimelineScrubTimeout = TimeSpan.FromSeconds(2);
 
     [Inject]
@@ -51,6 +62,8 @@ public partial class ClipViewer : ComponentBase
     private CancellationTokenSource _loadSegmentCts = new();
     private string mainVideoKey;
     private CameraFilterValues _lastAppliedCameraFilter = new();
+    private Tile? _fullscreenTile = null; // null = grid view, otherwise one of the Tile enum values
+    private DotNetObjectReference<ClipViewer> _objRef;
 
     [Parameter]
     public TeslaCamPlayer.BlazorHosted.Client.Models.CameraFilterValues CameraFilter { get; set; } = new();
@@ -66,44 +79,88 @@ public partial class ClipViewer : ComponentBase
         if (!firstRender)
             return;
 
-        _videoPlayerFront.Loaded += () =>
+        _objRef = DotNetObjectReference.Create(this);
+
+        if (_videoPlayerFront != null)
         {
-            Console.WriteLine("Loaded: Front");
-            _videoLoadedEventCount++;
-        };
-        _videoPlayerLeftRepeater.Loaded += () =>
+            _videoPlayerFront.Loaded += () => { _videoLoadedEventCount++; };
+        }
+        if (_videoPlayerLeftRepeater != null)
         {
-            Console.WriteLine("Loaded: Left");
-            _videoLoadedEventCount++;
-        };
-        _videoPlayerRightRepeater.Loaded += () =>
+            _videoPlayerLeftRepeater.Loaded += () => { _videoLoadedEventCount++; };
+        }
+        if (_videoPlayerRightRepeater != null)
         {
-            Console.WriteLine("Loaded: Right");
-            _videoLoadedEventCount++;
-        };
-        _videoPlayerBack.Loaded += () =>
+            _videoPlayerRightRepeater.Loaded += () => { _videoLoadedEventCount++; };
+        }
+        if (_videoPlayerBack != null)
         {
-            Console.WriteLine("Loaded: Back");
-            _videoLoadedEventCount++;
-        };
-        _videoPlayerLeftBPillar.Loaded += () =>
+            _videoPlayerBack.Loaded += () => { _videoLoadedEventCount++; };
+        }
+        if (_videoPlayerLeftBPillar != null)
         {
-            Console.WriteLine("Loaded: LeftBPillar");
-            _videoLoadedEventCount++;
-        };
-        _videoPlayerRightBPillar.Loaded += () =>
+            _videoPlayerLeftBPillar.Loaded += () => { _videoLoadedEventCount++; };
+        }
+        if (_videoPlayerRightBPillar != null)
         {
-            Console.WriteLine("Loaded: RightBPillar");
-            _videoLoadedEventCount++;
-        };
+            _videoPlayerRightBPillar.Loaded += () => { _videoLoadedEventCount++; };
+        }
     }
 
     private static Task AwaitUiUpdate()
         => Task.Delay(100);
 
+    private bool IsFullscreen => _fullscreenTile.HasValue;
+
+    private string GetTileCss(Tile tile)
+        => _fullscreenTile == tile ? "is-fullscreen" : null;
+
+    private async Task ToggleFullscreen(Tile tile)
+    {
+        if (_fullscreenTile == tile)
+        {
+            await ExitFullscreen();
+        }
+        else
+        {
+            await EnterFullscreen(tile);
+        }
+    }
+
+    private async Task EnterFullscreen(Tile tile)
+    {
+        _fullscreenTile = tile;
+        try { await JsRuntime.InvokeVoidAsync("registerEscHandler", _objRef); } catch { }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ExitFullscreen()
+    {
+        _fullscreenTile = null;
+        try { await JsRuntime.InvokeVoidAsync("unregisterEscHandler"); } catch { }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task ExitFullscreenFromJs()
+        => ExitFullscreen();
+
+    private async Task TileKeyDown(KeyboardEventArgs e, Tile tile)
+    {
+        if (e.Key == "Enter" || e.Key == " ")
+        {
+            await ToggleFullscreen(tile);
+        }
+        else if (e.Key == "Escape" && IsFullscreen)
+        {
+            await ExitFullscreen();
+        }
+    }
+
     public async Task SetClipAsync(Clip clip)
     {
         _clip = clip;
+        await EnsurePlayersReadyAsync();
         TimelineValue = 0;
         _timelineMaxSeconds = (clip.EndDate - clip.StartDate).TotalSeconds;
 
@@ -114,6 +171,21 @@ public partial class ClipViewer : ComponentBase
         { mainVideoKey = "128D7AB3"; }
         else
         { mainVideoKey = CameraToVideoKey(_clip.Event.Camera); }
+    }
+
+    private async Task EnsurePlayersReadyAsync()
+    {
+        var sw = Stopwatch.StartNew();
+        while ((_videoPlayerFront == null ||
+                _videoPlayerBack == null ||
+                _videoPlayerLeftRepeater == null ||
+                _videoPlayerRightRepeater == null ||
+                _videoPlayerLeftBPillar == null ||
+                _videoPlayerRightBPillar == null) && sw.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            try { await InvokeAsync(StateHasChanged); } catch { }
+            await Task.Delay(10);
+        }
     }
 
     private void SwitchMainVideo(string newMainVideoKey)
@@ -161,6 +233,20 @@ public partial class ClipViewer : ComponentBase
     private string GetPlayerClass(string videoKey)
     {
         return videoKey == mainVideoKey ? "video main-video" : "video small-video-style";
+    }
+
+    private bool IsTileVisible(Tile tile)
+    {
+        return tile switch
+        {
+            Tile.Front => !string.IsNullOrWhiteSpace(_videoPlayerFront?.Src),
+            Tile.Back => !string.IsNullOrWhiteSpace(_videoPlayerBack?.Src),
+            Tile.LeftRepeater => !string.IsNullOrWhiteSpace(_videoPlayerLeftRepeater?.Src),
+            Tile.RightRepeater => !string.IsNullOrWhiteSpace(_videoPlayerRightRepeater?.Src),
+            Tile.LeftPillar => !string.IsNullOrWhiteSpace(_videoPlayerLeftBPillar?.Src),
+            Tile.RightPillar => !string.IsNullOrWhiteSpace(_videoPlayerRightBPillar?.Src),
+            _ => false
+        };
     }
 
     private string GetCurrentScrubTime()
@@ -227,12 +313,12 @@ public partial class ClipViewer : ComponentBase
     {
         try
         {
-            await action(_videoPlayerFront);
-            await action(_videoPlayerBack);
-            await action(_videoPlayerLeftRepeater);
-            await action(_videoPlayerRightRepeater);
-            await action(_videoPlayerLeftBPillar);
-            await action(_videoPlayerRightBPillar);
+            if (_videoPlayerFront != null) await action(_videoPlayerFront);
+            if (_videoPlayerBack != null) await action(_videoPlayerBack);
+            if (_videoPlayerLeftRepeater != null) await action(_videoPlayerLeftRepeater);
+            if (_videoPlayerRightRepeater != null) await action(_videoPlayerRightRepeater);
+            if (_videoPlayerLeftBPillar != null) await action(_videoPlayerLeftBPillar);
+            if (_videoPlayerRightBPillar != null) await action(_videoPlayerRightBPillar);
         }
         catch
         {
@@ -470,5 +556,11 @@ public partial class ClipViewer : ComponentBase
 
         var percentage = DateTimeToTimelinePercentage(_clip.Event.Timestamp);
         return $"left: {percentage}%";
+    }
+
+    public void Dispose()
+    {
+        try { JsRuntime?.InvokeVoidAsync("unregisterEscHandler"); } catch { }
+        try { _objRef?.Dispose(); } catch { }
     }
 }
