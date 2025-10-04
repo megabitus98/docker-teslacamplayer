@@ -10,7 +10,7 @@ RUN apk add --no-cache \
 
 # copy local TeslaCamPlayer sources from this repo
 WORKDIR /src
-COPY tmp_TeslaCamPlayer/ /src/TeslaCamPlayer/
+COPY TeslaCamPlayer/ /src/TeslaCamPlayer/
 
 # build server
 WORKDIR /src/TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server
@@ -37,7 +37,7 @@ FROM ghcr.io/imagegenius/baseimage-alpine:3.20
 ARG BUILD_DATE
 ARG VERSION
 LABEL build_version="ImageGenius Version:- ${VERSION} Build-date:- ${BUILD_DATE}"
-LABEL maintainer="hydazz"
+LABEL maintainer="megabitus98"
 
 # environment settings
 ENV ClipsRootPath=/media \

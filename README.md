@@ -5,22 +5,20 @@
 
 upstream not maintained (not really needed anymore with the remote dashcam viewer in app)
 
-# [imagegenius/teslacamplayer](https://github.com/imagegenius/docker-teslacamplayer)
+# [megabitus98/docker-teslacamplayer](https://github.com/megabitus98/docker-teslacamplayer)
 
-[![GitHub Release](https://img.shields.io/github/release/imagegenius/docker-teslacamplayer.svg?color=007EC6&labelColor=555555&logoColor=ffffff&style=for-the-badge&logo=github)](https://github.com/imagegenius/docker-teslacamplayer/releases)
-[![GitHub Package Repository](https://shields.io/badge/GitHub%20Package-blue?logo=github&logoColor=ffffff&style=for-the-badge)](https://github.com/imagegenius/docker-teslacamplayer/packages)
-[![Jenkins Build](https://img.shields.io/jenkins/build?labelColor=555555&logoColor=ffffff&style=for-the-badge&jobUrl=https%3A%2F%2Fci.imagegenius.io%2Fjob%2FDocker-Pipeline-Builders%2Fjob%2Fdocker-teslacamplayer%2Fjob%2Fmain%2F&logo=jenkins)](https://ci.imagegenius.io/job/Docker-Pipeline-Builders/job/docker-teslacamplayer/job/main/)
-[![IG CI](https://img.shields.io/badge/dynamic/yaml?color=007EC6&labelColor=555555&logoColor=ffffff&style=for-the-badge&label=CI&query=CI&url=https%3A%2F%2Fci-tests.imagegenius.io%2Fteslacamplayer%2Flatest-main%2Fci-status.yml)](https://ci-tests.imagegenius.io/teslacamplayer/latest-main/index.html)
+[![GitHub Release](https://img.shields.io/github/release/megabitus98/docker-teslacamplayer.svg?color=007EC6&labelColor=555555&logoColor=ffffff&style=for-the-badge&logo=github)](https://github.com/megabitus98/docker-teslacamplayer/releases)
+[![GitHub Package Repository](https://shields.io/badge/GitHub%20Package-blue?logo=github&logoColor=ffffff&style=for-the-badge)](https://github.com/megabitus98/docker-teslacamplayer/packages)
 
 A Blazor WASM application for easily viewing locally stored Tesla sentry & dashcam videos.
 
-[![teslacamplayer]()](https://github.com/hydazz/TeslaCamPlayer)
+> Forked from [imagegenius/docker-teslacamplayer](https://github.com/imagegenius/docker-teslacamplayer), which itself builds on [hydazz/TeslaCamPlayer](https://github.com/hydazz/TeslaCamPlayer).
 
 ## Supported Architectures
 
 We use Docker manifest for cross-platform compatibility. More details can be found on [Docker's website](https://distribution.github.io/distribution/spec/manifest-v2-2/#manifest-list).
 
-To obtain the appropriate image for your architecture, simply pull `ghcr.io/imagegenius/teslacamplayer:latest`. Alternatively, you can also obtain specific architecture images by using tags.
+To obtain the appropriate image for your architecture, simply pull `ghcr.io/megabitus98/teslacamplayer:latest`. Alternatively, you can also obtain specific architecture images by using tags.
 
 This image supports the following architectures:
 
@@ -44,7 +42,7 @@ Example snippets to start creating a container:
 ---
 services:
   teslacamplayer:
-    image: ghcr.io/imagegenius/teslacamplayer:latest
+    image: ghcr.io/megabitus98/teslacamplayer:latest
     container_name: teslacamplayer
     environment:
       - PUID=1000
@@ -70,7 +68,7 @@ docker run -d \
   -v path_to_appdata:/config \
   -v path_to_teslacam:/media \
   --restart unless-stopped \
-  ghcr.io/imagegenius/teslacamplayer:latest
+  ghcr.io/megabitus98/teslacamplayer:latest
 ```
 
 ## Parameters
@@ -101,7 +99,6 @@ Example: `PUID=1000` and `PGID=1000`. To find your PUID and PGID, run `id user`.
     uid=1000(dockeruser) gid=1000(dockergroup) groups=1000(dockergroup)
 ```
 
-
 ## Updating the Container
 
 Most of our images are static, versioned, and require an image update and container recreation to update the app. We do not recommend or support updating apps inside the container. Check the [Application Setup](#application-setup) section for recommendations for the specific image.
@@ -118,7 +115,7 @@ Instructions for updating containers:
 
 ### Via Docker Run
 
-* Update the image: `docker pull ghcr.io/imagegenius/teslacamplayer:latest`
+* Update the image: `docker pull ghcr.io/megabitus98/teslacamplayer:latest`
 * Stop the running container: `docker stop teslacamplayer`
 * Delete the container: `docker rm teslacamplayer`
 * Recreate a new container with the same docker run parameters as instructed above (if mapped correctly to a host folder, your `/config` folder and settings will be preserved)
