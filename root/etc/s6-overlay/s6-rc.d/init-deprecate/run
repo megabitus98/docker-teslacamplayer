@@ -1,18 +1,5 @@
 #!/usr/bin/with-contenv bash
 # shellcheck shell=bash
 
-echo '
-╔════════════════════════════════════════════════════╗
-╠════════════════════════════════════════════════════╣
-║                                                    ║
-║             This image is deprecated.              ║
-║      We will not offer support for this image      ║
-║            and it will not be updated.             ║
-║                                                    ║
-╠════════════════════════════════════════════════════╣
-╚════════════════════════════════════════════════════╝
-
-upstream not maintained (not really needed anymore with the remote dashcam viewer in app)
-
-
-══════════════════════════════════════════════════════'
+# Disable the original upstream deprecation banner while keeping a no-op service.
+exit 0
