@@ -25,6 +25,7 @@ public partial class ClipViewer
     private CameraFilterValues _lastAppliedCameraFilter = new();
     private Tile? _fullscreenTile;
     private DotNetObjectReference<ClipViewer> _objRef;
+    private (double Start, double End) _exportRange;
 
     private double TimelineValue
     {

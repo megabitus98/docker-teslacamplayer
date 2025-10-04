@@ -38,6 +38,25 @@ public class SettingsProvider : ISettingsProvider
             };
         }
 
+        // ExportRootPath default: under wwwroot/exports
+        if (string.IsNullOrWhiteSpace(settings.ExportRootPath))
+        {
+            var defaultExports = Path.Combine(AppContext.BaseDirectory, "wwwroot", "exports");
+            settings.ExportRootPath = defaultExports;
+        }
+
+        var exportRootEnv = Environment.GetEnvironmentVariable("EXPORT_ROOT_PATH");
+        if (!string.IsNullOrWhiteSpace(exportRootEnv))
+        {
+            settings.ExportRootPath = exportRootEnv;
+        }
+
+        var exportRetentionEnv = Environment.GetEnvironmentVariable("EXPORT_RETENTION_HOURS");
+        if (!string.IsNullOrWhiteSpace(exportRetentionEnv) && int.TryParse(exportRetentionEnv, out var hrs) && hrs > 0)
+        {
+            settings.ExportRetentionHours = hrs;
+        }
+
         return settings;
     }
 }

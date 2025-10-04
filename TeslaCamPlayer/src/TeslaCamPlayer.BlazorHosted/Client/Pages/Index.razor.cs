@@ -8,6 +8,8 @@ using TeslaCamPlayer.BlazorHosted.Client.Helpers;
 using TeslaCamPlayer.BlazorHosted.Client.Models;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 using System.Reflection;
+using System.Net.Http.Json;
+using System.Collections.Generic;
 
 namespace TeslaCamPlayer.BlazorHosted.Client.Pages;
 
@@ -38,6 +40,16 @@ public partial class Index : ComponentBase
     private RefreshStatus _refreshStatus = new();
     private CancellationTokenSource _refreshStatusCts;
     private bool _enableDelete = true;
+    private bool _isExportMode;
+    private string _exportFormat = "mp4";
+    private string _exportResolution = "original"; // or "1280x720", "1920x1080"
+    private string _exportQuality = "medium";
+    private bool _exportIncludeTimestamp = true;
+    private bool _exportIncludeLabels = true;
+    private string _exportJobId;
+    private ExportStatus _exportStatus;
+    private CancellationTokenSource _exportPollCts;
+    private bool _showExportPanel;
 
     protected override async Task OnInitializedAsync()
     {
@@ -145,6 +157,171 @@ public partial class Index : ComponentBase
         {
             await DeleteEventAsync();
         }
+    }
+
+    private void ToggleExportMode()
+    {
+        _isExportMode = !_isExportMode;
+        if (!_isExportMode)
+        {
+            StopExportPolling();
+            _exportJobId = null;
+            _exportStatus = null;
+            _showExportPanel = false;
+        }
+    }
+
+    private void ToggleExportPanel() => _showExportPanel = !_showExportPanel;
+    private async Task OpenExportDialog()
+    {
+        if (!_isExportMode || _activeClip == null || IsExportRunning)
+            return;
+
+        var parameters = new DialogParameters
+        {
+            [nameof(ExportSettingsDialog.Format)] = _exportFormat,
+            [nameof(ExportSettingsDialog.Resolution)] = _exportResolution,
+            [nameof(ExportSettingsDialog.Quality)] = _exportQuality,
+            [nameof(ExportSettingsDialog.IncludeTimestamp)] = _exportIncludeTimestamp,
+            [nameof(ExportSettingsDialog.IncludeLabels)] = _exportIncludeLabels,
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true,
+            CloseButton = true,
+            DisableBackdropClick = false,
+            CloseOnEscapeKey = true
+        };
+
+        var dlg = DialogService.Show<ExportSettingsDialog>("Export Settings", parameters, options);
+        var result = await dlg.Result;
+        if (result.Cancelled || result.Data is not ExportSettingsDialog.Result res)
+            return;
+
+        _exportFormat = res.Format;
+        _exportResolution = res.Resolution;
+        _exportQuality = res.Quality;
+        _exportIncludeTimestamp = res.IncludeTimestamp;
+        _exportIncludeLabels = res.IncludeLabels;
+
+        await StartExport();
+    }
+
+    private bool IsExportRunning => !string.IsNullOrWhiteSpace(_exportJobId) && _exportStatus is { State: ExportState.Running or ExportState.Pending };
+
+    private (int? w, int? h) ParseResolution()
+    {
+        if (_exportResolution == "original") return (null, null);
+        var parts = _exportResolution.Split('x');
+        if (parts.Length == 2 && int.TryParse(parts[0], out var w) && int.TryParse(parts[1], out var h))
+            return (w, h);
+        return (null, null);
+    }
+
+    private async Task StartExport()
+    {
+        if (_activeClip == null) return;
+
+        var (startUtc, endUtc) = _clipViewer.GetSelectedInterval();
+        if (endUtc <= startUtc)
+            return;
+
+        var (cams, cols) = _clipViewer.GetVisibleCamerasAndColumns();
+        if (cams == null || cams.Count == 0)
+            return;
+
+        var (w, h) = ParseResolution();
+        var request = new ExportRequest
+        {
+            ClipDirectoryPath = _activeClip.DirectoryPath,
+            StartTimeUtc = startUtc,
+            EndTimeUtc = endUtc,
+            OrderedCameras = cams.ToList(),
+            GridColumns = cols,
+            Format = _exportFormat,
+            Width = w,
+            Height = h,
+            Quality = _exportQuality,
+            IncludeTimestamp = _exportIncludeTimestamp,
+            IncludeCameraLabels = _exportIncludeLabels
+        };
+
+        var resp = await HttpClient.PostAsJsonAsync("Api/StartExport", request);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        _exportJobId = body?["jobId"];
+        _exportStatus = null;
+        StartExportPolling();
+        await ShowExportProgressAsync();
+    }
+
+    private void StartExportPolling()
+    {
+        StopExportPolling();
+        if (string.IsNullOrWhiteSpace(_exportJobId)) return;
+        _exportPollCts = new CancellationTokenSource();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!_exportPollCts.IsCancellationRequested && !string.IsNullOrWhiteSpace(_exportJobId))
+                {
+                    var st = await HttpClient.GetFromNewtonsoftJsonAsync<ExportStatus>($"Api/ExportStatus?jobId={Uri.EscapeDataString(_exportJobId)}");
+                    _exportStatus = st;
+                    await InvokeAsync(StateHasChanged);
+                    if (st == null || st.State == ExportState.Completed || st.State == ExportState.Failed || st.State == ExportState.Canceled)
+                        break;
+                    await Task.Delay(500, _exportPollCts.Token);
+                }
+            }
+            catch { }
+        }, _exportPollCts.Token);
+    }
+
+    private void StopExportPolling()
+    {
+        try { _exportPollCts?.Cancel(); } catch { }
+        try { _exportPollCts?.Dispose(); } catch { }
+        _exportPollCts = null;
+    }
+
+    private async Task ShowExportProgressAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_exportJobId))
+            return;
+
+        var parameters = new DialogParameters
+        {
+            [nameof(ExportProgressDialog.JobId)] = _exportJobId
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true,
+            DisableBackdropClick = false,
+            CloseOnEscapeKey = true
+        };
+
+        var dlg = DialogService.Show<ExportProgressDialog>("Export Progress", parameters, options);
+        await dlg.Result; // wait until user closes
+    }
+
+    private async Task OpenExportHistoryDialog()
+    {
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Large,
+            FullWidth = true,
+            CloseButton = true,
+            DisableBackdropClick = false,
+            CloseOnEscapeKey = true
+        };
+
+        var dlg = DialogService.Show<ExportHistoryDialog>("Export History", options);
+        await dlg.Result;
     }
 
     private async Task DeleteEventAsync()

@@ -17,6 +17,8 @@ builder.Services.AddRazorPages();
 builder.Services.AddSingleton<ISettingsProvider, SettingsProvider>();
 builder.Services.AddSingleton<IRefreshProgressService, RefreshProgressService>();
 builder.Services.AddTransient<IClipsService, ClipsService>();
+builder.Services.AddSingleton<IExportService, ExportService>();
+builder.Services.AddHostedService<ExportCleanupService>();
 #if WINDOWS
 builder.Services.AddTransient<IFfProbeService, FfProbeServiceWindows>();
 #elif DOCKER

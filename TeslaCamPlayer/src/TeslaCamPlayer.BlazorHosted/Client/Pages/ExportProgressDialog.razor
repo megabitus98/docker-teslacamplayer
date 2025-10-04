@@ -1,0 +1,119 @@
+@using MudBlazor
+@using TeslaCamPlayer.BlazorHosted.Shared.Models
+@using TeslaCamPlayer.BlazorHosted.Client.Helpers
+
+<MudDialog Class="pa-2" MaxWidth="MaxWidth.Small" FullWidth="true">
+    <DialogContent>
+        <MudText Typo="Typo.h6" Class="mb-2">Exporting Video</MudText>
+
+        @if (_status == null || _status.State == ExportState.Pending)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+            <MudText Typo="Typo.caption" Class="mt-1">Preparing export…</MudText>
+        }
+        else if (_status.State == ExportState.Running)
+        {
+            <MudProgressLinear Color="Color.Primary" Value="@_status.Percent" />
+            <MudText Typo="Typo.caption" Class="mt-1">@(_status.Percent.ToString("0.0"))%</MudText>
+        }
+        else if (_status.State == ExportState.Completed)
+        {
+            <MudAlert Severity="Severity.Success" Class="mb-2">Export completed successfully.</MudAlert>
+            @if (!string.IsNullOrWhiteSpace(_status.OutputUrl))
+            {
+                <MudButton Color="Color.Success" Href="@_status.OutputUrl" Target="_blank">Download Export</MudButton>
+            }
+        }
+        else if (_status.State == ExportState.Failed)
+        {
+            <MudAlert Severity="Severity.Error">@(_status.ErrorMessage ?? "Export failed.")</MudAlert>
+        }
+        else if (_status.State == ExportState.Canceled)
+        {
+            <MudAlert Severity="Severity.Warning">Export was canceled.</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        @if (_status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(_status?.OutputUrl))
+        {
+            <MudButton Color="Color.Success" Href="@_status.OutputUrl" Target="_blank">Download</MudButton>
+        }
+        @if ((_status == null || _status.State == ExportState.Pending || _status.State == ExportState.Running) && !_isCancelling)
+        {
+            <MudButton Color="Color.Error" Variant="Variant.Outlined" OnClick="@CancelExport">Cancel Export</MudButton>
+        }
+        @if (_isCancelling)
+        {
+            <MudButton Disabled="true" Variant="Variant.Outlined">Cancelling…</MudButton>
+        }
+        <MudButton Variant="Variant.Text" OnClick="@Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; }
+
+    [Parameter] public string JobId { get; set; }
+
+    [Inject] private HttpClient HttpClient { get; set; }
+
+    private ExportStatus _status;
+    private CancellationTokenSource _cts;
+    private bool _isCancelling;
+
+    protected override void OnInitialized()
+    {
+        _cts = new CancellationTokenSource();
+        _ = PollAsync(_cts.Token);
+    }
+
+    private async Task PollAsync(CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(JobId))
+            return;
+
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                var st = await HttpClient.GetFromNewtonsoftJsonAsync<ExportStatus>($"Api/ExportStatus?jobId={Uri.EscapeDataString(JobId)}");
+                _status = st;
+                await InvokeAsync(StateHasChanged);
+
+                if (st == null || st.State == ExportState.Completed || st.State == ExportState.Failed || st.State == ExportState.Canceled)
+                    break;
+
+                await Task.Delay(500, token);
+            }
+        }
+        catch
+        {
+            // swallow polling errors; UI will reflect last known status
+        }
+    }
+
+    private async Task CancelExport()
+    {
+        if (string.IsNullOrWhiteSpace(JobId) || _isCancelling)
+            return;
+
+        _isCancelling = true;
+        try
+        {
+            await HttpClient.PostAsync($"Api/CancelExport?jobId={Uri.EscapeDataString(JobId)}", new StringContent(string.Empty));
+        }
+        catch { }
+    }
+
+    void Close()
+    {
+        try { _cts?.Cancel(); } catch { }
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    public void Dispose()
+    {
+        try { _cts?.Cancel(); } catch { }
+        try { _cts?.Dispose(); } catch { }
+    }
+}

@@ -43,6 +43,27 @@ body {
     overflow-y: auto;
 }
 
+/* Allow long checkbox labels to wrap cleanly */
+.wrap-label.mud-checkbox {
+    /* Align multi-line labels nicely with the checkbox */
+    align-items: flex-start;
+    width: 100%;
+}
+
+.wrap-label .mud-checkbox-content,
+.wrap-label .mud-checkbox-content .mud-typography,
+.wrap-label .mud-checkbox-content .mud-typography-body1,
+.wrap-label .mud-checkbox-content > span {
+    /* Override MudBlazor's single-line, ellipsized label */
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+    max-width: 100%;
+    min-width: 0;
+    display: block;
+    flex: 1 1 auto;
+}
+
 .event {
     display: flex;
     padding: 5px;

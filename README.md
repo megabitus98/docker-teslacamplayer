@@ -12,14 +12,14 @@ A Blazor WASM application for easily viewing locally stored Tesla sentry & dashc
 
 We use Docker manifest for cross-platform compatibility. More details can be found on [Docker's website](https://distribution.github.io/distribution/spec/manifest-v2-2/#manifest-list).
 
-To obtain the appropriate image for your architecture, simply pull `ghcr.io/megabitus98/teslacamplayer:latest`. Alternatively, you can also obtain specific architecture images by using tags.
+To obtain the appropriate image for your architecture, simply pull `docker.io/megabitus/teslacamplayer:latest`. Alternatively, you can also obtain specific architecture images by using tags.
 
 This image supports the following architectures:
 
 | Architecture | Available | Tag |
 | :----: | :----: | ---- |
-| x86-64 | ✅ | amd64-\<version tag\> |
-| arm64 | ✅ | arm64v8-\<version tag\> |
+| x86-64 | ✅ | \<version tag\>-amd64 |
+| arm64 | ✅ | \<version tag\>-arm64 |
 | armhf | ❌ | |
 
 ## Application Setup
@@ -36,12 +36,15 @@ Example snippets to start creating a container:
 ---
 services:
   teslacamplayer:
-    image: ghcr.io/megabitus98/teslacamplayer:latest
+    image: docker.io/megabitus/teslacamplayer:latest
     container_name: teslacamplayer
     environment:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
+      - EXPORT_RETENTION_HOURS=24
+      - EXPORT_ROOT_PATH=/export
+      - ENABLE_DELETE=false
     volumes:
       - path_to_appdata:/config
       - path_to_teslacam:/media
@@ -62,7 +65,7 @@ docker run -d \
   -v path_to_appdata:/config \
   -v path_to_teslacam:/media \
   --restart unless-stopped \
-  ghcr.io/megabitus98/teslacamplayer:latest
+  docker.io/megabitus/teslacamplayer:latest
 ```
 
 ## Parameters

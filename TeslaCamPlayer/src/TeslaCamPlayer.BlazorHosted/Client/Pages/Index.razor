@@ -6,6 +6,16 @@
     <MudAppBar Elevation="1">
         <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@ToggleDrawer" />
         <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@ToggleExportMode">
+            <MudIcon Icon="@Icons.Material.Filled.FileUpload" Class="mr-2" /> Export Video
+        </MudButton>
+        @if (_isExportMode)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Class="ml-2" OnClick="@OpenExportDialog">
+                <MudIcon Icon="@Icons.Material.Filled.Settings" Class="mr-2" /> Video Export
+            </MudButton>
+        }
+        <MudButton Variant="Variant.Text" Color="Color.Inherit" Class="ml-2" OnClick="@OpenExportHistoryDialog">History</MudButton>
         <MudIconButton Icon="@Icons.Custom.Brands.GitHub" Color="Color.Inherit" Href="https://github.com/hydazz/TeslaCamPlayer" Target="_blank" />
         <MudText Typo="Typo.h6" Class="ml-2">@AssemblyVersion</MudText>
     </MudAppBar>
@@ -102,9 +112,10 @@
             </div>
         }
     </MudDrawer>
+    @* Export settings moved to a pop-out dialog opened via the toolbar button *@
     <MudMainContent Class="viewer-container">
         <ClipViewer @ref="_clipViewer" PreviousButtonClicked="PreviousButtonClicked"
-            NextButtonClicked="NextButtonClicked" CameraFilter="_cameraFilter" />
+            NextButtonClicked="NextButtonClicked" CameraFilter="_cameraFilter" IsExportMode="@_isExportMode" />
     </MudMainContent>
 </MudLayout>
 

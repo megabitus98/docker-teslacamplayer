@@ -1,0 +1,46 @@
+@using MudBlazor
+
+<MudDialog Class="pa-2" MaxWidth="MaxWidth.Medium" FullWidth="true">
+    <DialogContent>
+        <MudText Typo="Typo.h6" Class="mb-2">Export Settings</MudText>
+        <div class="d-flex flex-column" style="gap: 12px;">
+            <MudSelect T="string" Label="Format" @bind-Value="Format">
+                <MudSelectItem Value='@("mp4")'>MP4 (H.264)</MudSelectItem>
+                <MudSelectItem Value='@("mov")'>MOV (H.264)</MudSelectItem>
+            </MudSelect>
+            <MudSelect T="string" Label="Resolution" @bind-Value="Resolution">
+                <MudSelectItem Value='@("original")'>Original (auto)</MudSelectItem>
+                <MudSelectItem Value='@("1280x720")'>1280 x 720</MudSelectItem>
+                <MudSelectItem Value='@("1920x1080")'>1920 x 1080</MudSelectItem>
+                <MudSelectItem Value='@("2560x1440")'>2560 x 1440</MudSelectItem>
+                <MudSelectItem Value='@("3840x2160")'>3840 x 2160</MudSelectItem>
+            </MudSelect>
+            <MudSelect T="string" Label="Quality" @bind-Value="Quality">
+                <MudSelectItem Value='@("low")'>Low</MudSelectItem>
+                <MudSelectItem Value='@("medium")'>Medium</MudSelectItem>
+                <MudSelectItem Value='@("high")'>High</MudSelectItem>
+            </MudSelect>
+            <MudCheckBox Class="wrap-label" @bind-Checked="IncludeTimestamp" Label="Include timestamp overlay" />
+            <MudCheckBox Class="wrap-label" @bind-Checked="IncludeLabels" Label="Include camera labels" />
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="@Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" OnClick="@Confirm">Start Export</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; }
+
+    [Parameter] public string Format { get; set; } = "mp4";
+    [Parameter] public string Resolution { get; set; } = "original";
+    [Parameter] public string Quality { get; set; } = "medium";
+    [Parameter] public bool IncludeTimestamp { get; set; } = true;
+    [Parameter] public bool IncludeLabels { get; set; } = true;
+
+    public record Result(string Format, string Resolution, string Quality, bool IncludeTimestamp, bool IncludeLabels);
+
+    void Cancel() => MudDialog.Cancel();
+    void Confirm() => MudDialog.Close(DialogResult.Ok(new Result(Format, Resolution, Quality, IncludeTimestamp, IncludeLabels)));
+}
