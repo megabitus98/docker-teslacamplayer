@@ -35,6 +35,8 @@ public partial class Index : ComponentBase
     private bool _filterChanged;
     private EventFilterValues _eventFilter = new();
     private TeslaCamPlayer.BlazorHosted.Client.Models.CameraFilterValues _cameraFilter = new();
+    private RefreshStatus _refreshStatus = new();
+    private CancellationTokenSource _refreshStatusCts;
 
     protected override async Task OnInitializedAsync()
     {
@@ -63,9 +65,62 @@ public partial class Index : ComponentBase
         await InvokeAsync(StateHasChanged);
 
         _setDatePickerInitialDate = false;
-        _clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=" + refreshCache);
+        if (refreshCache)
+        {
+            StartRefreshStatusPolling();
+        }
+
+        try
+        {
+            _clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=" + refreshCache);
+        }
+        finally
+        {
+            if (refreshCache)
+            {
+                StopRefreshStatusPolling();
+            }
+        }
 
         FilterClips();
+    }
+
+    private void StartRefreshStatusPolling()
+    {
+        StopRefreshStatusPolling();
+        _refreshStatus = new();
+        _refreshStatusCts = new CancellationTokenSource();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!_refreshStatusCts.IsCancellationRequested)
+                {
+                    var status = await HttpClient.GetFromNewtonsoftJsonAsync<RefreshStatus>("Api/GetRefreshStatus");
+                    _refreshStatus = status ?? new RefreshStatus();
+                    await InvokeAsync(StateHasChanged);
+                    await Task.Delay(300, _refreshStatusCts.Token);
+                }
+            }
+            catch
+            {
+                // ignore polling errors/cancellation
+            }
+        }, _refreshStatusCts.Token);
+    }
+
+    private void StopRefreshStatusPolling()
+    {
+        try
+        {
+            _refreshStatusCts?.Cancel();
+        }
+        catch { }
+        finally
+        {
+            _refreshStatusCts?.Dispose();
+            _refreshStatusCts = null;
+        }
     }
 
     private async Task OpenDeleteConfirmationDialog()

@@ -12,17 +12,23 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Controllers;
 public class ApiController : ControllerBase
 {
     private readonly IClipsService _clipsService;
+    private readonly IRefreshProgressService _refreshProgressService;
     private readonly string _rootFullPath;
 
-    public ApiController(ISettingsProvider settingsProvider, IClipsService clipsService)
+    public ApiController(ISettingsProvider settingsProvider, IClipsService clipsService, IRefreshProgressService refreshProgressService)
     {
         _rootFullPath = Path.GetFullPath(settingsProvider.Settings.ClipsRootPath);
         _clipsService = clipsService;
+        _refreshProgressService = refreshProgressService;
     }
 
     [HttpGet]
     public async Task<Clip[]> GetClips(bool refreshCache = false)
         => await _clipsService.GetClipsAsync(refreshCache);
+
+    [HttpGet]
+    public RefreshStatus GetRefreshStatus()
+        => _refreshProgressService.GetStatus();
 
     private bool IsUnderRootPath(string path)
         => path.StartsWith(_rootFullPath);

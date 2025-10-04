@@ -16,11 +16,13 @@ public partial class ClipsService : IClipsService
     private readonly ISettingsProvider _settingsProvider;
     private readonly IFfProbeService _ffProbeService;
     private readonly SemaphoreSlim _ffprobeSemaphore;
+    private readonly IRefreshProgressService _refreshProgressService;
 
-    public ClipsService(ISettingsProvider settingsProvider, IFfProbeService ffProbeService)
+    public ClipsService(ISettingsProvider settingsProvider, IFfProbeService ffProbeService, IRefreshProgressService refreshProgressService)
     {
         _settingsProvider = settingsProvider;
         _ffProbeService = ffProbeService;
+        _refreshProgressService = refreshProgressService;
         // limit the number of ffprobe instances to how many cores we have, otherwise... BOOM!
         int semaphoreCount = Environment.ProcessorCount;
         _ffprobeSemaphore = new SemaphoreSlim(semaphoreCount);
@@ -47,14 +49,39 @@ public partial class ClipsService : IClipsService
             .Where(f => f != null)
             .ToDictionary(v => v.FilePath, v => v);
 
-        var videoFiles = (await Task.WhenAll(Directory
+        // Gather candidate files and matches first
+        var candidates = Directory
             .GetFiles(_settingsProvider.Settings.ClipsRootPath, "*.mp4", SearchOption.AllDirectories)
-            .AsParallel()
             .Select(path => new { Path = path, RegexMatch = FileNameRegex.Match(path) })
             .Where(f => f.RegexMatch.Success)
-            .ToList()
-            .Select(async f => knownVideoFiles.TryGetValue(f.Path, out var knownVideo) ? knownVideo : await TryParseVideoFileAsync(f.Path, f.RegexMatch))))
-            .AsParallel()
+            .ToList();
+
+        if (refreshCache)
+        {
+            _refreshProgressService.Start(candidates.Count);
+        }
+
+        async Task<VideoFile> ProcessAsync(string path, System.Text.RegularExpressions.Match match)
+        {
+            try
+            {
+                if (knownVideoFiles.TryGetValue(path, out var known))
+                {
+                    return known;
+                }
+                return await TryParseVideoFileAsync(path, match);
+            }
+            finally
+            {
+                if (refreshCache)
+                {
+                    _refreshProgressService.Increment();
+                }
+            }
+        }
+
+        var videoFiles = (await Task.WhenAll(candidates
+            .Select(c => ProcessAsync(c.Path, c.RegexMatch))))
             .Where(vfi => vfi != null)
             .ToList();
 
@@ -73,6 +100,10 @@ public partial class ClipsService : IClipsService
 
         _cache = clips;
         await File.WriteAllTextAsync(CacheFilePath, JsonConvert.SerializeObject(clips));
+        if (refreshCache)
+        {
+            _refreshProgressService.Complete();
+        }
         return _cache;
     }
 

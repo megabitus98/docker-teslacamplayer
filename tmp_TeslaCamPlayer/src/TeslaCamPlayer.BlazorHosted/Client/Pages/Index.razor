@@ -16,8 +16,17 @@
         @if (_filteredclips == null)
         {
             <div class="loading-screen">
-                <MudProgressCircular Color="Color.Default" Indeterminate="true" />
-                <MudText Typo="Typo.body1">Indexing events, this can take a while depending on how many videos there are to index!</MudText>
+                <MudText Typo="Typo.body1" Class="mb-2">Refreshing events...</MudText>
+                <MudProgressLinear Color="Color.Default" Indeterminate="@(_refreshStatus.Total <= 0)"
+                                    Value="@(_refreshStatus.Total > 0 ? ((double)_refreshStatus.Processed / _refreshStatus.Total) * 100d : 0)" />
+                @if (_refreshStatus.Total > 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mt-2">@_refreshStatus.Processed / @_refreshStatus.Total</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="mt-2">Indexing events, this can take a while depending on how many videos there are to index!</MudText>
+                }
             </div>
         }
         else
