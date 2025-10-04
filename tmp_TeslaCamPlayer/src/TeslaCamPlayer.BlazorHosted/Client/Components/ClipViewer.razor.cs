@@ -235,9 +235,23 @@ public partial class ClipViewer : ComponentBase, IDisposable
         return videoKey == mainVideoKey ? "video main-video" : "video small-video-style";
     }
 
-    private bool IsTileVisible(Tile tile)
+    private bool IsTileEnabled(Tile tile)
     {
         return tile switch
+        {
+            Tile.Front => CameraFilter.ShowFront,
+            Tile.Back => CameraFilter.ShowBack,
+            Tile.LeftRepeater => CameraFilter.ShowLeftRepeater,
+            Tile.RightRepeater => CameraFilter.ShowRightRepeater,
+            Tile.LeftPillar => CameraFilter.ShowLeftPillar,
+            Tile.RightPillar => CameraFilter.ShowRightPillar,
+            _ => true
+        };
+    }
+
+    private bool IsTileVisible(Tile tile)
+    {
+        bool hasSrc = tile switch
         {
             Tile.Front => !string.IsNullOrWhiteSpace(_videoPlayerFront?.Src),
             Tile.Back => !string.IsNullOrWhiteSpace(_videoPlayerBack?.Src),
@@ -247,6 +261,35 @@ public partial class ClipViewer : ComponentBase, IDisposable
             Tile.RightPillar => !string.IsNullOrWhiteSpace(_videoPlayerRightBPillar?.Src),
             _ => false
         };
+        return IsTileEnabled(tile) && hasSrc;
+    }
+
+    private int VisibleTileCount()
+    {
+        int count = 0;
+        if (IsTileVisible(Tile.LeftPillar)) count++;
+        if (IsTileVisible(Tile.Front)) count++;
+        if (IsTileVisible(Tile.RightPillar)) count++;
+        if (IsTileVisible(Tile.LeftRepeater)) count++;
+        if (IsTileVisible(Tile.Back)) count++;
+        if (IsTileVisible(Tile.RightRepeater)) count++;
+        return count;
+    }
+
+    private string GridStyle()
+    {
+        var visible = VisibleTileCount();
+        int cols = visible switch
+        {
+            >= 5 => 3,
+            4 => 2,
+            3 => 3,
+            2 => 2,
+            1 => 1,
+            _ => 3
+        };
+
+        return $"grid-template-columns: repeat({cols}, minmax(0, 1fr)); grid-auto-rows: 1fr;";
     }
 
     private string GetCurrentScrubTime()
@@ -272,21 +315,20 @@ public partial class ClipViewer : ComponentBase, IDisposable
         if (wasPlaying)
             await TogglePlayingAsync(false);
 
-        _videoPlayerFront.Src = CameraFilter.ShowFront ? _currentSegment.CameraFront?.Url : null;
-        _videoPlayerBack.Src = CameraFilter.ShowBack ? _currentSegment.CameraBack?.Url : null;
-
-        // Show repeater and pillar feeds independently to enable 6-up view
-        _videoPlayerLeftRepeater.Src = CameraFilter.ShowLeftRepeater ? _currentSegment.CameraLeftRepeater?.Url : null;
-        _videoPlayerRightRepeater.Src = CameraFilter.ShowRightRepeater ? _currentSegment.CameraRightRepeater?.Url : null;
-        _videoPlayerLeftBPillar.Src = CameraFilter.ShowLeftPillar ? _currentSegment.CameraLeftBPillar?.Url : null;
-        _videoPlayerRightBPillar.Src = CameraFilter.ShowRightPillar ? _currentSegment.CameraRightBPillar?.Url : null;
+        // Always load sources based on current segment; filtering only affects visibility, not source assignment.
+        SetSrcIfChanged(_videoPlayerFront, _currentSegment.CameraFront?.Url);
+        SetSrcIfChanged(_videoPlayerBack, _currentSegment.CameraBack?.Url);
+        SetSrcIfChanged(_videoPlayerLeftRepeater, _currentSegment.CameraLeftRepeater?.Url);
+        SetSrcIfChanged(_videoPlayerRightRepeater, _currentSegment.CameraRightRepeater?.Url);
+        SetSrcIfChanged(_videoPlayerLeftBPillar, _currentSegment.CameraLeftBPillar?.Url);
+        SetSrcIfChanged(_videoPlayerRightBPillar, _currentSegment.CameraRightBPillar?.Url);
 
         if (_loadSegmentCts.IsCancellationRequested)
             return false;
 
         await InvokeAsync(StateHasChanged);
 
-        var timeout = Task.Delay(10000);
+        var timeout = Task.Delay(5000);
         var cameraCount = new[] { _videoPlayerFront.Src, _videoPlayerLeftRepeater.Src, _videoPlayerRightRepeater.Src, _videoPlayerBack.Src, _videoPlayerLeftBPillar.Src, _videoPlayerRightBPillar.Src }
             .Count(s => !string.IsNullOrWhiteSpace(s));
         var completedTask = await Task.WhenAny(Task.Run(async () =>
@@ -297,11 +339,9 @@ public partial class ClipViewer : ComponentBase, IDisposable
             Console.WriteLine("Loading done");
         }, _loadSegmentCts.Token), timeout);
 
+        // If loading times out, continue anyway to avoid stalled playback; players may still be able to start.
         if (completedTask == timeout)
-        {
-            Console.WriteLine("Loading timed out");
-            return false;
-        }
+            Console.WriteLine("Loading timed out — continuing");
 
         if (wasPlaying)
             await TogglePlayingAsync(true);
@@ -440,10 +480,9 @@ public partial class ClipViewer : ComponentBase, IDisposable
 
     protected override async Task OnParametersSetAsync()
     {
-        // Re-apply camera selection when filter changes
+        // When filter changes, only update UI state to avoid interrupting playback
         if (_clip != null && _currentSegment != null)
         {
-            // Simple change detection
             if (_lastAppliedCameraFilter.ShowFront != CameraFilter.ShowFront ||
                 _lastAppliedCameraFilter.ShowBack != CameraFilter.ShowBack ||
                 _lastAppliedCameraFilter.ShowLeftRepeater != CameraFilter.ShowLeftRepeater ||
@@ -460,9 +499,16 @@ public partial class ClipViewer : ComponentBase, IDisposable
                     ShowRightRepeater = CameraFilter.ShowRightRepeater,
                     ShowRightPillar = CameraFilter.ShowRightPillar
                 };
-                await SetCurrentSegmentVideosAsync();
+                await InvokeAsync(StateHasChanged);
             }
         }
+    }
+
+    private static void SetSrcIfChanged(VideoPlayer player, string newSrc)
+    {
+        if (player == null) return;
+        if (player.Src == newSrc) return;
+        player.Src = newSrc;
     }
 
     private async Task TimelineSliderPointerDown()

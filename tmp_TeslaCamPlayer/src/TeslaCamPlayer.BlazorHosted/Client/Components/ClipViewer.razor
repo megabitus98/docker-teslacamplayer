@@ -6,7 +6,7 @@
             Responsive auto-fit grid of camera tiles.
             When a tile enters fullscreen, apply class 'fullscreen-active' on the grid and 'is-fullscreen' on the active tile.
         -->
-        <div class="video-grid @(IsFullscreen ? "fullscreen-active" : null)">
+        <div class="video-grid @(IsFullscreen ? "fullscreen-active" : null)" style="@GridStyle()">
             <!-- Top row: Pillars + Front -->
             <div class="grid-tile @GetTileCss(Tile.LeftPillar) @(IsTileVisible(Tile.LeftPillar) ? null : "is-hidden")"
                  data-camera="left-pillar" data-visible="@(IsTileVisible(Tile.LeftPillar).ToString().ToLower())"
