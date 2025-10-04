@@ -377,6 +377,59 @@ public partial class ClipViewer : ComponentBase, IDisposable
     private Task PlayPauseClicked()
         => TogglePlayingAsync();
 
+    private Task SkipBackwardTenSeconds()
+        => SkipBySecondsAsync(-10);
+
+    private Task SkipForwardTenSeconds()
+        => SkipBySecondsAsync(10);
+
+    private async Task SkipBySecondsAsync(double offsetSeconds)
+    {
+        if (_clip == null)
+            return;
+
+        var targetTimelineSeconds = Math.Clamp(TimelineValue + offsetSeconds, 0, _timelineMaxSeconds);
+        await SeekToTimelineSecondsAsync(targetTimelineSeconds);
+    }
+
+    private async Task SeekToTimelineSecondsAsync(double targetTimelineSeconds)
+    {
+        if (_clip == null)
+            return;
+
+        targetTimelineSeconds = Math.Clamp(targetTimelineSeconds, 0, _timelineMaxSeconds);
+        var scrubToDate = _clip.StartDate.AddSeconds(targetTimelineSeconds);
+        var segment = _clip.SegmentAtDate(scrubToDate)
+            ?? _clip.Segments.Where(s => s.StartDate > scrubToDate).MinBy(s => s.StartDate);
+
+        if (segment == null)
+            return;
+
+        var wasPlaying = _isPlaying;
+        if (wasPlaying)
+            await TogglePlayingAsync(false);
+
+        if (segment != _currentSegment)
+        {
+            _currentSegment = segment;
+            if (!await SetCurrentSegmentVideosAsync())
+            {
+                if (wasPlaying)
+                    await TogglePlayingAsync(true);
+                return;
+            }
+        }
+
+        var secondsIntoSegment = (scrubToDate - segment.StartDate).TotalSeconds;
+        await ExecuteOnPlayers(async p => await p.SetTimeAsync(secondsIntoSegment));
+
+        TimelineValue = targetTimelineSeconds;
+        _ignoreTimelineValue = targetTimelineSeconds;
+
+        if (wasPlaying)
+            await TogglePlayingAsync(true);
+    }
+
     private async Task VideoEnded()
     {
         if (_currentSegment == _clip.Segments.Last())

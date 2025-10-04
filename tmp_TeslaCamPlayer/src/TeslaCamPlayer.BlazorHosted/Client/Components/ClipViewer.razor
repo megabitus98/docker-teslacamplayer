@@ -75,7 +75,9 @@
     <div class="controls">
         <div class="play-pause">
             <MudIconButton Icon="@Icons.Material.Filled.SkipPrevious" Size="Size.Large" OnClick="@PreviousButtonClicked" />
+            <MudIconButton Icon="@Icons.Material.Filled.Replay10" Size="Size.Medium" OnClick="@SkipBackwardTenSeconds" />
             <MudIconButton Icon="@(_isPlaying ? Icons.Material.Filled.PauseCircleOutline : Icons.Material.Filled.PlayCircleOutline)" Size="Size.Large" OnClick="@PlayPauseClicked" />
+            <MudIconButton Icon="@Icons.Material.Filled.Forward10" Size="Size.Medium" OnClick="@SkipForwardTenSeconds" />
             <MudIconButton Icon="@Icons.Material.Filled.SkipNext" Size="Size.Large" OnClick="@NextButtonClicked" />
             <MudTooltip Text="Jump to event marker">
                 <MudIconButton Icon="@Icons.Material.Filled.RadioButtonChecked" Size="Size.Medium" OnClick="@JumpToEventMarker" />
