@@ -1,0 +1,83 @@
+﻿@using TeslaCamPlayer.BlazorHosted.Shared.Models
+
+<div class="viewer">
+    <div class="video-container">
+        <div class="video-grid">
+            <!-- Row 1: Left Pillar | Front | Right Pillar -->
+            <div class="grid-tile">
+                <VideoPlayer @key="@("L-BPILLAR")" @ref="_videoPlayerLeftBPillar" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
+                @if (!string.IsNullOrWhiteSpace(_videoPlayerLeftBPillar?.Src))
+                {
+                    <div class="tile-label">Left Pillar</div>
+                }
+            </div>
+            <div class="grid-tile">
+                <VideoPlayer @key="@("128D7AB3")" @ref="_videoPlayerFront" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
+                @if (!string.IsNullOrWhiteSpace(_videoPlayerFront?.Src))
+                {
+                    <div class="tile-label">Front</div>
+                }
+            </div>
+            <div class="grid-tile">
+                <VideoPlayer @key="@("R-BPILLAR")" @ref="_videoPlayerRightBPillar" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
+                @if (!string.IsNullOrWhiteSpace(_videoPlayerRightBPillar?.Src))
+                {
+                    <div class="tile-label">Right Pillar</div>
+                }
+            </div>
+
+            <!-- Row 2: Left Repeater | Back | Right Repeater -->
+            <div class="grid-tile">
+                <VideoPlayer @key="@("D1916B24")" @ref="_videoPlayerLeftRepeater" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
+                @if (!string.IsNullOrWhiteSpace(_videoPlayerLeftRepeater?.Src))
+                {
+                    <div class="tile-label">Left Repeater</div>
+                }
+            </div>
+            <div class="grid-tile">
+                <VideoPlayer @key="@("66EC38D4")" @ref="_videoPlayerBack" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
+                @if (!string.IsNullOrWhiteSpace(_videoPlayerBack?.Src))
+                {
+                    <div class="tile-label">Back</div>
+                }
+            </div>
+            <div class="grid-tile">
+                <VideoPlayer @key="@("87B15DCA")" @ref="_videoPlayerRightRepeater" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
+                @if (!string.IsNullOrWhiteSpace(_videoPlayerRightRepeater?.Src))
+                {
+                    <div class="tile-label">Right Repeater</div>
+                }
+            </div>
+        </div>
+    </div>
+    <div class="controls">
+        <div class="play-pause">
+            <MudIconButton Icon="@Icons.Material.Filled.SkipPrevious" Size="Size.Large" OnClick="@PreviousButtonClicked" />
+            <MudIconButton Icon="@(_isPlaying ? Icons.Material.Filled.PauseCircleOutline : Icons.Material.Filled.PlayCircleOutline)" Size="Size.Large" OnClick="@PlayPauseClicked" />
+            <MudIconButton Icon="@Icons.Material.Filled.SkipNext" Size="Size.Large" OnClick="@NextButtonClicked" />
+            <MudTooltip Text="Jump to event marker">
+                <MudIconButton Icon="@Icons.Material.Filled.RadioButtonChecked" Size="Size.Medium" OnClick="@JumpToEventMarker" />
+            </MudTooltip>
+        </div>
+        <div class="seeker-slider-container">
+            <div class="current-time-container">@GetCurrentScrubTime()</div>
+            <div class="slider-container">
+                <MudSlider T="double"
+                           @ref="_timelineSlider"
+                           Max="@_timelineMaxSeconds"
+                           Step="0.01"
+                           Size="Size.Medium"
+                           @bind-Value="@TimelineValue"
+                           Variant="Variant.Filled"
+                           @onpointerdown="@TimelineSliderPointerDown"
+                           @onpointerup="@TimelineSliderPointerUp" />
+                <div class="event-marker" style="@EventMarkerStyle()"></div>
+                @foreach (var segment in _clip?.Segments ?? Array.Empty<ClipVideoSegment>())
+                {
+                    <div class="segment-marker" style="@SegmentStartMarkerStyle(segment)"></div>
+                }
+            </div>
+            <div class="time-container">@_clip?.EndDate.ToString("hh:mm:ss tt")</div>
+        </div>
+    </div>
+</div>

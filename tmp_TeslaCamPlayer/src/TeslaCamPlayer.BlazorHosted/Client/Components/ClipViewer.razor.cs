@@ -1,0 +1,474 @@
+﻿using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
+using MudBlazor;
+using System.Timers;
+using TeslaCamPlayer.BlazorHosted.Shared.Models;
+using TeslaCamPlayer.BlazorHosted.Client.Models;
+
+namespace TeslaCamPlayer.BlazorHosted.Client.Components;
+
+public partial class ClipViewer : ComponentBase
+{
+    private static readonly TimeSpan TimelineScrubTimeout = TimeSpan.FromSeconds(2);
+
+    [Inject]
+    public IJSRuntime JsRuntime { get; set; }
+
+    [Parameter]
+    public EventCallback PreviousButtonClicked { get; set; }
+
+    [Parameter]
+    public EventCallback NextButtonClicked { get; set; }
+
+    private double TimelineValue
+    {
+        get => _timelineValue;
+        set
+        {
+            _timelineValue = value;
+            if (_isScrubbing)
+                _setVideoTimeDebounceTimer.Enabled = true;
+        }
+    }
+
+    private Clip _clip;
+    private VideoPlayer _videoPlayerFront;
+    private VideoPlayer _videoPlayerLeftRepeater;
+    private VideoPlayer _videoPlayerRightRepeater;
+    private VideoPlayer _videoPlayerBack;
+    private VideoPlayer _videoPlayerLeftBPillar;
+    private VideoPlayer _videoPlayerRightBPillar;
+    private int _videoLoadedEventCount = 0;
+    private bool _isPlaying;
+    private ClipVideoSegment _currentSegment;
+    private MudSlider<double> _timelineSlider;
+    private double _timelineMaxSeconds;
+    private double _ignoreTimelineValue;
+    private bool _wasPlayingBeforeScrub;
+    private bool _isScrubbing;
+    private double _timelineValue;
+    private System.Timers.Timer _setVideoTimeDebounceTimer;
+    private CancellationTokenSource _loadSegmentCts = new();
+    private string mainVideoKey;
+    private CameraFilterValues _lastAppliedCameraFilter = new();
+
+    [Parameter]
+    public TeslaCamPlayer.BlazorHosted.Client.Models.CameraFilterValues CameraFilter { get; set; } = new();
+
+    protected override void OnInitialized()
+    {
+        _setVideoTimeDebounceTimer = new(500);
+        _setVideoTimeDebounceTimer.Elapsed += ScrubVideoDebounceTick;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        _videoPlayerFront.Loaded += () =>
+        {
+            Console.WriteLine("Loaded: Front");
+            _videoLoadedEventCount++;
+        };
+        _videoPlayerLeftRepeater.Loaded += () =>
+        {
+            Console.WriteLine("Loaded: Left");
+            _videoLoadedEventCount++;
+        };
+        _videoPlayerRightRepeater.Loaded += () =>
+        {
+            Console.WriteLine("Loaded: Right");
+            _videoLoadedEventCount++;
+        };
+        _videoPlayerBack.Loaded += () =>
+        {
+            Console.WriteLine("Loaded: Back");
+            _videoLoadedEventCount++;
+        };
+        _videoPlayerLeftBPillar.Loaded += () =>
+        {
+            Console.WriteLine("Loaded: LeftBPillar");
+            _videoLoadedEventCount++;
+        };
+        _videoPlayerRightBPillar.Loaded += () =>
+        {
+            Console.WriteLine("Loaded: RightBPillar");
+            _videoLoadedEventCount++;
+        };
+    }
+
+    private static Task AwaitUiUpdate()
+        => Task.Delay(100);
+
+    public async Task SetClipAsync(Clip clip)
+    {
+        _clip = clip;
+        TimelineValue = 0;
+        _timelineMaxSeconds = (clip.EndDate - clip.StartDate).TotalSeconds;
+
+        _currentSegment = _clip.Segments.First();
+        await SetCurrentSegmentVideosAsync();
+
+        if (clip?.Event?.Camera == null)
+        { mainVideoKey = "128D7AB3"; }
+        else
+        { mainVideoKey = CameraToVideoKey(_clip.Event.Camera); }
+    }
+
+    private void SwitchMainVideo(string newMainVideoKey)
+    {
+        mainVideoKey = newMainVideoKey;
+    }
+
+    private string CameraToVideoKey(Cameras camera)
+    {
+        switch (camera)
+        {
+            case Cameras.Front:
+                return "128D7AB3";
+            case Cameras.RightRepeater:
+            case Cameras.RightBPillar:
+                return "87B15DCA";
+            case Cameras.Back:
+                return "66EC38D4";
+            case Cameras.LeftRepeater:
+            case Cameras.LeftBPillar:
+                return "D1916B24";
+            default:
+                return "128D7AB3";
+        }
+    }
+
+
+    private string GetVideoClass(string videoKey)
+    {
+        if (videoKey == mainVideoKey)
+            return "video main-video";
+        else
+        {
+            return videoKey switch
+            {
+                "128D7AB3" => "video small-video top-left-video",
+                "66EC38D4" => "video small-video top-right-video",
+                "D1916B24" => "video small-video bottom-left-video",
+                "87B15DCA" => "video small-video bottom-right-video",
+                _ => ""
+            };
+        }
+    }
+
+    private string GetPlayerClass(string videoKey)
+    {
+        return videoKey == mainVideoKey ? "video main-video" : "video small-video-style";
+    }
+
+    private string GetCurrentScrubTime()
+    {
+        if (_clip == null)
+        { return ""; }
+
+        var currentTime = _clip.StartDate.AddSeconds(TimelineValue);
+        return currentTime.ToString("hh:mm:ss tt");
+    }
+
+    private async Task<bool> SetCurrentSegmentVideosAsync()
+    {
+        if (_currentSegment == null)
+            return false;
+
+        await _loadSegmentCts.CancelAsync();
+        _loadSegmentCts = new();
+
+        _videoLoadedEventCount = 0;
+
+        var wasPlaying = _isPlaying;
+        if (wasPlaying)
+            await TogglePlayingAsync(false);
+
+        _videoPlayerFront.Src = CameraFilter.ShowFront ? _currentSegment.CameraFront?.Url : null;
+        _videoPlayerBack.Src = CameraFilter.ShowBack ? _currentSegment.CameraBack?.Url : null;
+
+        // Show repeater and pillar feeds independently to enable 6-up view
+        _videoPlayerLeftRepeater.Src = CameraFilter.ShowLeftRepeater ? _currentSegment.CameraLeftRepeater?.Url : null;
+        _videoPlayerRightRepeater.Src = CameraFilter.ShowRightRepeater ? _currentSegment.CameraRightRepeater?.Url : null;
+        _videoPlayerLeftBPillar.Src = CameraFilter.ShowLeftPillar ? _currentSegment.CameraLeftBPillar?.Url : null;
+        _videoPlayerRightBPillar.Src = CameraFilter.ShowRightPillar ? _currentSegment.CameraRightBPillar?.Url : null;
+
+        if (_loadSegmentCts.IsCancellationRequested)
+            return false;
+
+        await InvokeAsync(StateHasChanged);
+
+        var timeout = Task.Delay(10000);
+        var cameraCount = new[] { _videoPlayerFront.Src, _videoPlayerLeftRepeater.Src, _videoPlayerRightRepeater.Src, _videoPlayerBack.Src, _videoPlayerLeftBPillar.Src, _videoPlayerRightBPillar.Src }
+            .Count(s => !string.IsNullOrWhiteSpace(s));
+        var completedTask = await Task.WhenAny(Task.Run(async () =>
+        {
+            while (_videoLoadedEventCount < cameraCount && !_loadSegmentCts.IsCancellationRequested)
+                await Task.Delay(10, _loadSegmentCts.Token);
+
+            Console.WriteLine("Loading done");
+        }, _loadSegmentCts.Token), timeout);
+
+        if (completedTask == timeout)
+        {
+            Console.WriteLine("Loading timed out");
+            return false;
+        }
+
+        if (wasPlaying)
+            await TogglePlayingAsync(true);
+
+        return !_loadSegmentCts.IsCancellationRequested;
+    }
+
+    private async Task ExecuteOnPlayers(Func<VideoPlayer, Task> action)
+    {
+        try
+        {
+            await action(_videoPlayerFront);
+            await action(_videoPlayerBack);
+            await action(_videoPlayerLeftRepeater);
+            await action(_videoPlayerRightRepeater);
+            await action(_videoPlayerLeftBPillar);
+            await action(_videoPlayerRightBPillar);
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private Task TogglePlayingAsync(bool? play = null)
+    {
+        play ??= !_isPlaying;
+        _isPlaying = play.Value;
+        return ExecuteOnPlayers(async p => await (play.Value ? p.PlayAsync() : p.PauseAsync()));
+    }
+
+    private Task PlayPauseClicked()
+        => TogglePlayingAsync();
+
+    private async Task VideoEnded()
+    {
+        if (_currentSegment == _clip.Segments.Last())
+            return;
+
+        await TogglePlayingAsync(false);
+
+        var nextSegment = _clip.Segments
+            .OrderBy(s => s.StartDate)
+            .SkipWhile(s => s != _currentSegment)
+            .Skip(1)
+            .FirstOrDefault()
+            ?? _clip.Segments.FirstOrDefault();
+
+        if (nextSegment == null)
+        {
+            await TogglePlayingAsync(false);
+            return;
+        }
+
+        _currentSegment = nextSegment;
+        await SetCurrentSegmentVideosAsync();
+        await AwaitUiUpdate();
+        await TogglePlayingAsync(true);
+    }
+
+    private async Task ActiveVideoTimeUpdate()
+    {
+        if (_currentSegment == null)
+            return;
+
+        if (_isScrubbing)
+            return;
+
+        var player = GetActiveTimeSourcePlayer();
+        if (player == null)
+            return;
+
+        var seconds = await player.GetTimeAsync();
+        var currentTime = _currentSegment.StartDate.AddSeconds(seconds);
+        var secondsSinceClipStart = (currentTime - _clip.StartDate).TotalSeconds;
+
+        _ignoreTimelineValue = secondsSinceClipStart;
+        TimelineValue = secondsSinceClipStart;
+    }
+
+    private VideoPlayer GetActiveTimeSourcePlayer()
+    {
+        // Prefer a stable ordering for time source in 6-up grid
+        if (!string.IsNullOrWhiteSpace(_videoPlayerFront?.Src)) return _videoPlayerFront;
+        if (!string.IsNullOrWhiteSpace(_videoPlayerBack?.Src)) return _videoPlayerBack;
+        if (!string.IsNullOrWhiteSpace(_videoPlayerLeftRepeater?.Src)) return _videoPlayerLeftRepeater;
+        if (!string.IsNullOrWhiteSpace(_videoPlayerRightRepeater?.Src)) return _videoPlayerRightRepeater;
+        if (!string.IsNullOrWhiteSpace(_videoPlayerLeftBPillar?.Src)) return _videoPlayerLeftBPillar;
+        if (!string.IsNullOrWhiteSpace(_videoPlayerRightBPillar?.Src)) return _videoPlayerRightBPillar;
+        return null;
+    }
+
+    private string GetLeftCameraUrl()
+    {
+        var allowRepeater = CameraFilter.ShowLeftRepeater;
+        var allowPillar = CameraFilter.ShowLeftPillar;
+
+        if (!allowRepeater && !allowPillar)
+            return null;
+
+        // Prefer pillar when both are selected, else whichever is allowed
+        if (allowPillar && _currentSegment.CameraLeftBPillar?.Url != null)
+            return _currentSegment.CameraLeftBPillar.Url;
+        if (allowRepeater && _currentSegment.CameraLeftRepeater?.Url != null)
+            return _currentSegment.CameraLeftRepeater.Url;
+
+        // Fallback to the other if preferred is missing
+        if (allowRepeater)
+            return _currentSegment.CameraLeftRepeater?.Url;
+        if (allowPillar)
+            return _currentSegment.CameraLeftBPillar?.Url;
+
+        return null;
+    }
+
+    private string GetRightCameraUrl()
+    {
+        var allowRepeater = CameraFilter.ShowRightRepeater;
+        var allowPillar = CameraFilter.ShowRightPillar;
+
+        if (!allowRepeater && !allowPillar)
+            return null;
+
+        if (allowPillar && _currentSegment.CameraRightBPillar?.Url != null)
+            return _currentSegment.CameraRightBPillar.Url;
+        if (allowRepeater && _currentSegment.CameraRightRepeater?.Url != null)
+            return _currentSegment.CameraRightRepeater.Url;
+
+        if (allowRepeater)
+            return _currentSegment.CameraRightRepeater?.Url;
+        if (allowPillar)
+            return _currentSegment.CameraRightBPillar?.Url;
+
+        return null;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Re-apply camera selection when filter changes
+        if (_clip != null && _currentSegment != null)
+        {
+            // Simple change detection
+            if (_lastAppliedCameraFilter.ShowFront != CameraFilter.ShowFront ||
+                _lastAppliedCameraFilter.ShowBack != CameraFilter.ShowBack ||
+                _lastAppliedCameraFilter.ShowLeftRepeater != CameraFilter.ShowLeftRepeater ||
+                _lastAppliedCameraFilter.ShowLeftPillar != CameraFilter.ShowLeftPillar ||
+                _lastAppliedCameraFilter.ShowRightRepeater != CameraFilter.ShowRightRepeater ||
+                _lastAppliedCameraFilter.ShowRightPillar != CameraFilter.ShowRightPillar)
+            {
+                _lastAppliedCameraFilter = new CameraFilterValues
+                {
+                    ShowFront = CameraFilter.ShowFront,
+                    ShowBack = CameraFilter.ShowBack,
+                    ShowLeftRepeater = CameraFilter.ShowLeftRepeater,
+                    ShowLeftPillar = CameraFilter.ShowLeftPillar,
+                    ShowRightRepeater = CameraFilter.ShowRightRepeater,
+                    ShowRightPillar = CameraFilter.ShowRightPillar
+                };
+                await SetCurrentSegmentVideosAsync();
+            }
+        }
+    }
+
+    private async Task TimelineSliderPointerDown()
+    {
+        _isScrubbing = true;
+        _wasPlayingBeforeScrub = _isPlaying;
+        await TogglePlayingAsync(false);
+
+        // Allow value change event to trigger, then scrub before user releases mouse click
+        await AwaitUiUpdate();
+        await ScrubToSliderTime();
+    }
+
+    private async Task TimelineSliderPointerUp()
+    {
+        Console.WriteLine("Pointer up");
+        await ScrubToSliderTime();
+        _isScrubbing = false;
+
+        if (!_isPlaying && _wasPlayingBeforeScrub)
+            await TogglePlayingAsync(true);
+    }
+
+    private async void ScrubVideoDebounceTick(object _, ElapsedEventArgs __)
+        => await ScrubToSliderTime();
+
+    private async Task ScrubToSliderTime()
+    {
+        _setVideoTimeDebounceTimer.Enabled = false;
+
+        if (!_isScrubbing)
+            return;
+
+        try
+        {
+            var scrubToDate = _clip.StartDate.AddSeconds(TimelineValue);
+            var segment = _clip.SegmentAtDate(scrubToDate)
+                ?? _clip.Segments.Where(s => s.StartDate > scrubToDate).MinBy(s => s.StartDate);
+
+            if (segment == null)
+                return;
+
+            if (segment != _currentSegment)
+            {
+                _currentSegment = segment;
+                if (!await SetCurrentSegmentVideosAsync())
+                    return;
+            }
+
+            var secondsIntoSegment = (scrubToDate - segment.StartDate).TotalSeconds;
+            await ExecuteOnPlayers(async p => await p.SetTimeAsync(secondsIntoSegment));
+        }
+        catch
+        {
+            // ignore, happens sometimes
+        }
+    }
+
+    private async void JumpToEventMarker()
+    {
+        if (_clip?.Event?.Timestamp == null)
+            return;
+
+        var eventTimeSeconds = (_clip.Event.Timestamp - _clip.StartDate).TotalSeconds - 5;
+        eventTimeSeconds = Math.Max(eventTimeSeconds, 0);
+
+        _isScrubbing = true;
+        TimelineValue = eventTimeSeconds;
+        await ScrubToSliderTime();
+        _isScrubbing = false;
+
+        await TogglePlayingAsync(true);
+    }
+
+    private double DateTimeToTimelinePercentage(DateTime dateTime)
+    {
+        var percentage = Math.Round(dateTime.Subtract(_clip.StartDate).TotalSeconds / _clip.TotalSeconds * 100, 2);
+        return Math.Clamp(percentage, 0, 100);
+    }
+
+    private string SegmentStartMarkerStyle(ClipVideoSegment segment)
+    {
+        var percentage = DateTimeToTimelinePercentage(segment.StartDate);
+        return $"left: {percentage}%";
+    }
+
+    private string EventMarkerStyle()
+    {
+        if (_clip?.Event?.Timestamp == null)
+            return "display: none";
+
+        var percentage = DateTimeToTimelinePercentage(_clip.Event.Timestamp);
+        return $"left: {percentage}%";
+    }
+}
