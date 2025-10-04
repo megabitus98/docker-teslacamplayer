@@ -18,6 +18,10 @@ public partial class ClipsService : IClipsService
     private readonly SemaphoreSlim _ffprobeSemaphore;
     private readonly IRefreshProgressService _refreshProgressService;
 
+    // State for background progressive refresh
+    private readonly object _refreshGate = new();
+    private Task _refreshTask;
+
     public ClipsService(ISettingsProvider settingsProvider, IFfProbeService ffProbeService, IRefreshProgressService refreshProgressService)
     {
         _settingsProvider = settingsProvider;
@@ -39,72 +43,124 @@ public partial class ClipsService : IClipsService
     {
         _cache ??= await GetCachedAsync();
 
+        // If we already have a cache and caller didn't request refresh, return fast
         if (!refreshCache && _cache != null)
             return _cache;
 
-        _cache ??= [];
+        // When there is no cache yet (first run) or refresh is requested, start background refresh
+        StartBackgroundRefreshIfNeeded();
 
-        var knownVideoFiles = _cache
-            .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
-            .Where(f => f != null)
-            .ToDictionary(v => v.FilePath, v => v);
+        // Ensure we always return a non-null array for the first paint
+        _cache ??= Array.Empty<Clip>();
+        return _cache;
+    }
 
-        // Gather candidate files and matches first
-        var candidates = Directory
-            .GetFiles(_settingsProvider.Settings.ClipsRootPath, "*.mp4", SearchOption.AllDirectories)
-            .Select(path => new { Path = path, RegexMatch = FileNameRegex.Match(path) })
-            .Where(f => f.RegexMatch.Success)
-            .ToList();
-
-        if (refreshCache)
+    private void StartBackgroundRefreshIfNeeded()
+    {
+        lock (_refreshGate)
         {
-            _refreshProgressService.Start(candidates.Count);
+            if (_refreshTask != null && !_refreshTask.IsCompleted)
+                return;
+
+            _refreshTask = Task.Run(async () => await RefreshCacheWorkerAsync());
         }
+    }
 
-        async Task<VideoFile> ProcessAsync(string path, System.Text.RegularExpressions.Match match)
+    private async Task RefreshCacheWorkerAsync()
+    {
+        try
         {
-            try
+            var existing = _cache ?? Array.Empty<Clip>();
+            var knownVideoFiles = existing
+                .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
+                .Where(f => f != null)
+                .ToDictionary(v => v.FilePath, v => v);
+
+            var candidates = Directory
+                .GetFiles(_settingsProvider.Settings.ClipsRootPath, "*.mp4", SearchOption.AllDirectories)
+                .Select(path => new { Path = path, RegexMatch = FileNameRegex.Match(path) })
+                .Where(f => f.RegexMatch.Success)
+                .ToList();
+
+            _refreshProgressService.Start(candidates.Count);
+
+            var results = new System.Collections.Concurrent.ConcurrentBag<VideoFile>();
+
+            async Task<VideoFile> ProcessAsync(string path, System.Text.RegularExpressions.Match match)
             {
-                if (knownVideoFiles.TryGetValue(path, out var known))
+                try
                 {
-                    return known;
+                    if (knownVideoFiles.TryGetValue(path, out var known))
+                        return known;
+                    return await TryParseVideoFileAsync(path, match);
                 }
-                return await TryParseVideoFileAsync(path, match);
-            }
-            finally
-            {
-                if (refreshCache)
+                finally
                 {
                     _refreshProgressService.Increment();
                 }
             }
+
+            // Periodic updater to publish partial results
+            using var periodicCts = new CancellationTokenSource();
+            var periodicTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!periodicCts.IsCancellationRequested)
+                    {
+                        await Task.Delay(1000, periodicCts.Token);
+                        await PublishPartialAsync(results.ToArray());
+                    }
+                }
+                catch { }
+            }, periodicCts.Token);
+
+            await Parallel.ForEachAsync(candidates, async (c, ct) =>
+            {
+                var v = await ProcessAsync(c.Path, c.RegexMatch);
+                if (v != null)
+                    results.Add(v);
+            });
+
+            // Final publish
+            periodicCts.Cancel();
+            try { await periodicTask; } catch { }
+            await PublishPartialAsync(results.ToArray());
         }
-
-        var videoFiles = (await Task.WhenAll(candidates
-            .Select(c => ProcessAsync(c.Path, c.RegexMatch))))
-            .Where(vfi => vfi != null)
-            .ToList();
-
-        var recentClips = GetRecentClips(videoFiles
-            .Where(vfi => vfi.ClipType == ClipType.Recent).ToList());
-
-        var clips = videoFiles
-            .Select(vfi => vfi.EventFolderName)
-            .Distinct()
-            .AsParallel()
-            .Where(e => !string.IsNullOrWhiteSpace(e))
-            .Select(e => ParseClip(e, videoFiles))
-            .Concat(recentClips.AsParallel())
-            .OrderByDescending(c => c.StartDate)
-            .ToArray();
-
-        _cache = clips;
-        await File.WriteAllTextAsync(CacheFilePath, JsonConvert.SerializeObject(clips));
-        if (refreshCache)
+        finally
         {
             _refreshProgressService.Complete();
         }
-        return _cache;
+    }
+
+    private async Task PublishPartialAsync(VideoFile[] videoFiles)
+    {
+        try
+        {
+            var recentClips = GetRecentClips(videoFiles
+                .Where(vfi => vfi.ClipType == ClipType.Recent)
+                .ToList());
+
+            var eventClips = videoFiles
+                .Select(vfi => vfi.EventFolderName)
+                .Where(e => !string.IsNullOrWhiteSpace(e))
+                .Distinct()
+                .AsParallel()
+                .Select(e => ParseClip(e, videoFiles))
+                .ToArray();
+
+            var clips = eventClips
+                .Concat(recentClips.AsParallel())
+                .OrderByDescending(c => c.StartDate)
+                .ToArray();
+
+            _cache = clips;
+            await File.WriteAllTextAsync(CacheFilePath, JsonConvert.SerializeObject(clips));
+        }
+        catch
+        {
+            // ignore partial publish errors to avoid stopping the refresh loop
+        }
     }
 
     private static IEnumerable<Clip> GetRecentClips(List<VideoFile> recentVideoFiles)

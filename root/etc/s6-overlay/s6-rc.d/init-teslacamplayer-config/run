@@ -8,3 +8,10 @@ mkdir -p \
 lsiown -R abc:abc \
     /config \
 	/app
+
+# ensure export root is present and writable when explicitly configured
+if [ -n "${EXPORT_ROOT_PATH:-}" ]; then
+    mkdir -p "$EXPORT_ROOT_PATH" || true
+    # align ownership with runtime user (abc respects PUID/PGID from base image)
+    lsiown -R abc:abc "$EXPORT_ROOT_PATH"
+fi

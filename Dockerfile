@@ -47,7 +47,7 @@ FROM ghcr.io/imagegenius/baseimage-alpine:3.20
 # set version label
 ARG BUILD_DATE
 ARG VERSION
-LABEL build_version="ImageGenius Version:- ${VERSION} Build-date:- ${BUILD_DATE}"
+LABEL build_version="Version:- ${VERSION} Build-date:- ${BUILD_DATE}"
 LABEL maintainer="megabitus98"
 
 # environment settings

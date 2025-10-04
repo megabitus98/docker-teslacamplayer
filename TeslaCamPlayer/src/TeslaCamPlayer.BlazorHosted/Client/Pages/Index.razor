@@ -70,6 +70,23 @@
                 <MudOverlay @bind-Visible="_showFilter" OnClick="ToggleFilter" />
             </MudToolBar>
 
+            @if (_refreshStatus?.IsRefreshing == true)
+            {
+                <div class="px-3 pb-1">
+                    <MudProgressLinear Dense="true" Color="Color.Default"
+                        Indeterminate="@(_refreshStatus.Total <= 0)"
+                        Value="@(_refreshStatus.Total > 0 ? ((double)_refreshStatus.Processed / _refreshStatus.Total) * 100d : 0)" />
+                    @if (_refreshStatus.Total > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-1">Indexing @_refreshStatus.Processed / @_refreshStatus.Total</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-1">Indexing events…</MudText>
+                    }
+                </div>
+            }
+
             <div @ref="_eventsList" class="events-list" @onscroll="EventListScrolled">
                 <Virtualize TItem="Clip" ItemSize="@EventItemHeight" Items="@_filteredclips" OverscanCount="10">
                     <ItemContent>

@@ -94,19 +94,15 @@ public partial class Index : ComponentBase
             StartRefreshStatusPolling();
         }
 
-        try
-        {
-            _clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=" + refreshCache);
-        }
-        finally
-        {
-            if (refreshCache)
-            {
-                StopRefreshStatusPolling();
-            }
-        }
+        _clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=" + refreshCache);
 
         FilterClips();
+
+        // If we didn't explicitly request a refresh but server may be indexing in the background (first run), start polling
+        if (!refreshCache && (_clips == null || _clips.Length == 0))
+        {
+            StartRefreshStatusPolling();
+        }
     }
 
     private void StartRefreshStatusPolling()
@@ -118,11 +114,47 @@ public partial class Index : ComponentBase
         {
             try
             {
+                var lastProcessed = -1;
+                var lastClipsUpdate = DateTime.MinValue;
+                bool seenActiveRefresh = false;
                 while (!_refreshStatusCts.IsCancellationRequested)
                 {
                     var status = await HttpClient.GetFromNewtonsoftJsonAsync<RefreshStatus>("Api/GetRefreshStatus");
                     _refreshStatus = status ?? new RefreshStatus();
+                    var shouldUpdateClips = false;
+                    if (status != null)
+                    {
+                        if (status.IsRefreshing)
+                            seenActiveRefresh = true;
+                        if (status.Processed != lastProcessed)
+                        {
+                            // throttle clip list updates to ~2/sec
+                            shouldUpdateClips = (DateTime.UtcNow - lastClipsUpdate).TotalMilliseconds > 500;
+                        }
+                        lastProcessed = status.Processed;
+                    }
+
+                    if (shouldUpdateClips)
+                    {
+                        try
+                        {
+                            var clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=false");
+                            await InvokeAsync(() =>
+                            {
+                                _clips = clips ?? Array.Empty<Clip>();
+                                FilterClips();
+                            });
+                            lastClipsUpdate = DateTime.UtcNow;
+                        }
+                        catch { }
+                    }
+
                     await InvokeAsync(StateHasChanged);
+
+                    // Stop polling when we've observed an active refresh that has now completed.
+                    if (status != null && !status.IsRefreshing && seenActiveRefresh && (status.Total > 0 || status.Processed > 0))
+                        break;
+
                     await Task.Delay(300, _refreshStatusCts.Token);
                 }
             }

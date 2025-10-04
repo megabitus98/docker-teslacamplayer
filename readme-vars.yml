@@ -5,7 +5,7 @@ project_name: teslacamplayer
 project_url: "https://github.com/hydazz/TeslaCamPlayer"
 project_logo: ""
 project_blurb: "A Blazor WASM application for easily viewing locally stored Tesla sentry & dashcam videos."
-project_github_repo_url: "https://github.com/imagegenius/docker-{{ project_name }}"
+project_github_repo_url: "https://github.com/megabitus/docker-{{ project_name }}"
 project_blurb_optional_extras_enabled: false
 
 project_deprecation_status: true
