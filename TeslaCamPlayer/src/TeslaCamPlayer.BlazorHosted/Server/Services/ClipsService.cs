@@ -1,6 +1,14 @@
 ﻿using Newtonsoft.Json;
 using Serilog;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using TeslaCamPlayer.BlazorHosted.Server.Models;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
@@ -70,67 +78,302 @@ public partial class ClipsService : IClipsService
     {
         try
         {
+            var stopwatch = Stopwatch.StartNew();
+            var settings = _settingsProvider.Settings;
+            var initialBatchSize = Math.Max(settings.IndexingBatchSize, settings.IndexingMinBatchSize);
+            var minBatchSize = Math.Max(1, settings.IndexingMinBatchSize);
+
             var existing = _cache ?? Array.Empty<Clip>();
-            var knownVideoFiles = existing
-                .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
-                .Where(f => f != null)
-                .ToDictionary(v => v.FilePath, v => v);
-
-            var candidates = Directory
-                .GetFiles(_settingsProvider.Settings.ClipsRootPath, "*.mp4", SearchOption.AllDirectories)
-                .Select(path => new { Path = path, RegexMatch = FileNameRegex.Match(path) })
-                .Where(f => f.RegexMatch.Success)
-                .ToList();
-
-            _refreshProgressService.Start(candidates.Count);
-
-            var results = new System.Collections.Concurrent.ConcurrentBag<VideoFile>();
-
-            async Task<VideoFile> ProcessAsync(string path, System.Text.RegularExpressions.Match match)
+            var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
+            foreach (var video in existing
+                         .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
+                         .Where(v => v != null))
             {
-                try
+                knownVideoFiles[video.FilePath] = video;
+            }
+
+            var totalCandidates = EnumerateCandidatePaths(settings).Count();
+            Log.Information(
+                "Event indexing started with {CandidateCount} candidate video files. Target batch size {BatchSize}, minimum batch size {MinBatchSize}, memory threshold {MemoryThreshold:P2}.",
+                totalCandidates,
+                initialBatchSize,
+                minBatchSize,
+                settings.IndexingMaxMemoryUtilization);
+
+            _refreshProgressService.Start(totalCandidates);
+
+            var aggregatedResults = new List<VideoFile>();
+            var pendingPaths = new List<string>(initialBatchSize);
+            var currentBatchSize = initialBatchSize;
+            var batchNumber = 0;
+
+            foreach (var path in EnumerateCandidatePaths(settings))
+            {
+                pendingPaths.Add(path);
+
+                while (pendingPaths.Count >= currentBatchSize)
                 {
-                    if (knownVideoFiles.TryGetValue(path, out var known))
-                        return known;
-                    return await TryParseVideoFileAsync(path, match);
-                }
-                finally
-                {
-                    _refreshProgressService.Increment();
+                    batchNumber++;
+                    currentBatchSize = await ExecuteBatchAsync(
+                        batchNumber,
+                        pendingPaths,
+                        currentBatchSize,
+                        minBatchSize,
+                        knownVideoFiles,
+                        aggregatedResults,
+                        settings,
+                        CancellationToken.None);
                 }
             }
 
-            // Periodic updater to publish partial results
-            using var periodicCts = new CancellationTokenSource();
-            var periodicTask = Task.Run(async () =>
+            if (pendingPaths.Count > 0)
             {
-                try
-                {
-                    while (!periodicCts.IsCancellationRequested)
-                    {
-                        await Task.Delay(1000, periodicCts.Token);
-                        await PublishPartialAsync(results.ToArray());
-                    }
-                }
-                catch { }
-            }, periodicCts.Token);
+                batchNumber++;
+                currentBatchSize = await ExecuteBatchAsync(
+                    batchNumber,
+                    pendingPaths,
+                    Math.Min(currentBatchSize, pendingPaths.Count),
+                    minBatchSize,
+                    knownVideoFiles,
+                    aggregatedResults,
+                    settings,
+                    CancellationToken.None);
+            }
 
-            await Parallel.ForEachAsync(candidates, async (c, ct) =>
-            {
-                var v = await ProcessAsync(c.Path, c.RegexMatch);
-                if (v != null)
-                    results.Add(v);
-            });
+            await PublishPartialAsync(aggregatedResults.ToArray());
 
-            // Final publish
-            periodicCts.Cancel();
-            try { await periodicTask; } catch { }
-            await PublishPartialAsync(results.ToArray());
+            stopwatch.Stop();
+
+            var totalEventCount = aggregatedResults
+                .Select(v => v?.EventFolderName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+
+            Log.Information(
+                "Event indexing completed in {Elapsed}. Indexed {VideoCount} video files across {EventCount} events using {BatchCount} batches.",
+                stopwatch.Elapsed,
+                aggregatedResults.Count,
+                totalEventCount,
+                batchNumber);
         }
         finally
         {
             _refreshProgressService.Complete();
         }
+    }
+
+    private async Task<int> ExecuteBatchAsync(
+        int batchNumber,
+        List<string> pendingPaths,
+        int requestedBatchSize,
+        int minBatchSize,
+        ConcurrentDictionary<string, VideoFile> knownVideoFiles,
+        List<VideoFile> aggregateResults,
+        Settings settings,
+        CancellationToken cancellationToken)
+    {
+        var (targetBatchSize, snapshotBefore) = await PrepareBatchAsync(
+            Math.Max(minBatchSize, requestedBatchSize),
+            minBatchSize,
+            batchNumber,
+            settings,
+            cancellationToken);
+
+        var actualCount = Math.Min(targetBatchSize, pendingPaths.Count);
+        if (actualCount == 0)
+        {
+            return targetBatchSize;
+        }
+
+        var batchPaths = pendingPaths.GetRange(0, actualCount);
+        pendingPaths.RemoveRange(0, actualCount);
+
+        Log.Information(
+            "Batch {BatchNumber} starting: {FileCount} files. WorkingSet={WorkingSetMb:F2} MB, Managed={ManagedMb:F2} MB, Available={AvailableMb:F2} MB, Utilization={Utilization:P2} (threshold {Threshold:P2}).",
+            batchNumber,
+            batchPaths.Count,
+            snapshotBefore.WorkingSetInMegabytes,
+            snapshotBefore.ManagedMemoryInMegabytes,
+            snapshotBefore.AvailableMemoryInMegabytes,
+            snapshotBefore.Utilization,
+            settings.IndexingMaxMemoryUtilization);
+
+        var batchResults = await ProcessBatchInternalAsync(batchPaths, knownVideoFiles);
+
+        var batchEventCount = batchResults
+            .Select(v => v?.EventFolderName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        aggregateResults.AddRange(batchResults);
+
+        await PublishPartialAsync(aggregateResults.ToArray());
+
+        PerformGarbageCollection($"post-batch {batchNumber}");
+        var snapshotAfter = CaptureMemorySnapshot();
+
+        Log.Information(
+            "Batch {BatchNumber} completed: indexed {VideoCount} videos ({EventCount} events). WorkingSet={WorkingSetMb:F2} MB, Managed={ManagedMb:F2} MB, Available={AvailableMb:F2} MB, Utilization={Utilization:P2}.",
+            batchNumber,
+            batchResults.Count,
+            batchEventCount,
+            snapshotAfter.WorkingSetInMegabytes,
+            snapshotAfter.ManagedMemoryInMegabytes,
+            snapshotAfter.AvailableMemoryInMegabytes,
+            snapshotAfter.Utilization);
+
+        return targetBatchSize;
+    }
+
+    private async Task<(int BatchSize, MemorySnapshot Snapshot)> PrepareBatchAsync(
+        int requestedBatchSize,
+        int minBatchSize,
+        int batchNumber,
+        Settings settings,
+        CancellationToken cancellationToken)
+    {
+        var adjustedBatchSize = Math.Max(minBatchSize, requestedBatchSize);
+
+        while (true)
+        {
+            var snapshot = CaptureMemorySnapshot();
+
+            if (settings.IndexingMaxMemoryUtilization <= 0 || snapshot.Utilization <= settings.IndexingMaxMemoryUtilization)
+            {
+                return (adjustedBatchSize, snapshot);
+            }
+
+            if (adjustedBatchSize > minBatchSize)
+            {
+                var reducedBatchSize = Math.Max(minBatchSize, adjustedBatchSize / 2);
+                Log.Warning(
+                    "Batch {BatchNumber}: memory utilization {Utilization:P2} exceeds threshold {Threshold:P2}. Reducing batch size from {CurrentSize} to {ReducedSize}.",
+                    batchNumber,
+                    snapshot.Utilization,
+                    settings.IndexingMaxMemoryUtilization,
+                    adjustedBatchSize,
+                    reducedBatchSize);
+                adjustedBatchSize = reducedBatchSize;
+            }
+            else
+            {
+                Log.Warning(
+                    "Batch {BatchNumber}: memory utilization {Utilization:P2} exceeds threshold {Threshold:P2}. Pausing for {DelaySeconds}s to recover.",
+                    batchNumber,
+                    snapshot.Utilization,
+                    settings.IndexingMaxMemoryUtilization,
+                    settings.IndexingMemoryRecoveryDelaySeconds);
+                await Task.Delay(TimeSpan.FromSeconds(settings.IndexingMemoryRecoveryDelaySeconds), cancellationToken);
+            }
+
+            PerformGarbageCollection($"memory-pressure (batch {batchNumber})");
+        }
+    }
+
+    private async Task<List<VideoFile>> ProcessBatchInternalAsync(
+        List<string> batchPaths,
+        ConcurrentDictionary<string, VideoFile> knownVideoFiles)
+    {
+        var tasks = batchPaths
+            .Select(path => ProcessVideoFileAsync(path, knownVideoFiles))
+            .ToArray();
+
+        var processed = await Task.WhenAll(tasks);
+        return processed
+            .Where(v => v != null)
+            .ToList();
+    }
+
+    private async Task<VideoFile> ProcessVideoFileAsync(
+        string path,
+        ConcurrentDictionary<string, VideoFile> knownVideoFiles)
+    {
+        try
+        {
+            if (knownVideoFiles.TryGetValue(path, out var known))
+            {
+                return known;
+            }
+
+            var match = FileNameRegex.Match(path);
+            if (!match.Success)
+            {
+                Log.Debug("Skipping video file that does not match expected naming pattern: {Path}", path);
+                return null;
+            }
+
+            var parsed = await TryParseVideoFileAsync(path, match);
+            if (parsed != null)
+            {
+                knownVideoFiles[path] = parsed;
+            }
+
+            return parsed;
+        }
+        finally
+        {
+            _refreshProgressService.Increment();
+        }
+    }
+
+    private IEnumerable<string> EnumerateCandidatePaths(Settings settings)
+    {
+        foreach (var path in Directory.EnumerateFiles(settings.ClipsRootPath, "*.mp4", SearchOption.AllDirectories))
+        {
+            if (FileNameRegex.IsMatch(path))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private static void PerformGarbageCollection(string reason)
+    {
+        Log.Information("Invoking garbage collection ({Reason}).", reason);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+    }
+
+    private static MemorySnapshot CaptureMemorySnapshot()
+    {
+        using var process = Process.GetCurrentProcess();
+        var workingSet = process.WorkingSet64;
+        var managedMemory = GC.GetTotalMemory(forceFullCollection: false);
+        var gcInfo = GC.GetGCMemoryInfo();
+        var availableMemory = gcInfo.TotalAvailableMemoryBytes > 0
+            ? gcInfo.TotalAvailableMemoryBytes
+            : gcInfo.HighMemoryLoadThresholdBytes;
+        var utilization = availableMemory > 0
+            ? (double)gcInfo.MemoryLoadBytes / availableMemory
+            : 0d;
+
+        return new MemorySnapshot(workingSet, managedMemory, availableMemory, utilization);
+    }
+
+    private static double BytesToMegabytes(long bytes)
+        => bytes <= 0 ? 0d : bytes / 1024d / 1024d;
+
+    private readonly struct MemorySnapshot
+    {
+        public MemorySnapshot(long workingSetBytes, long managedMemoryBytes, long availableMemoryBytes, double utilization)
+        {
+            WorkingSetBytes = workingSetBytes;
+            ManagedMemoryBytes = managedMemoryBytes;
+            AvailableMemoryBytes = availableMemoryBytes;
+            Utilization = utilization;
+        }
+
+        public long WorkingSetBytes { get; }
+        public long ManagedMemoryBytes { get; }
+        public long AvailableMemoryBytes { get; }
+        public double Utilization { get; }
+
+        public double WorkingSetInMegabytes => BytesToMegabytes(WorkingSetBytes);
+        public double ManagedMemoryInMegabytes => BytesToMegabytes(ManagedMemoryBytes);
+        public double AvailableMemoryInMegabytes => BytesToMegabytes(AvailableMemoryBytes);
     }
 
     private async Task PublishPartialAsync(VideoFile[] videoFiles)

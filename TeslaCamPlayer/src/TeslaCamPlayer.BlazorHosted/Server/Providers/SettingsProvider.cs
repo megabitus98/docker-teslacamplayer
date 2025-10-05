@@ -1,4 +1,5 @@
-﻿using TeslaCamPlayer.BlazorHosted.Server.Models;
+﻿using System.Globalization;
+using TeslaCamPlayer.BlazorHosted.Server.Models;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 
 namespace TeslaCamPlayer.BlazorHosted.Server.Providers;
@@ -55,6 +56,61 @@ public class SettingsProvider : ISettingsProvider
         if (!string.IsNullOrWhiteSpace(exportRetentionEnv) && int.TryParse(exportRetentionEnv, out var hrs) && hrs > 0)
         {
             settings.ExportRetentionHours = hrs;
+        }
+
+        // Indexing batch size
+        if (settings.IndexingBatchSize <= 0)
+        {
+            settings.IndexingBatchSize = 1000;
+        }
+
+        var indexingBatchEnv = Environment.GetEnvironmentVariable("INDEXING_BATCH_SIZE");
+        if (!string.IsNullOrWhiteSpace(indexingBatchEnv) && int.TryParse(indexingBatchEnv, out var batchSize) && batchSize > 0)
+        {
+            settings.IndexingBatchSize = batchSize;
+        }
+
+        // Indexing minimum batch size should not exceed main batch size
+        if (settings.IndexingMinBatchSize <= 0)
+        {
+            settings.IndexingMinBatchSize = Math.Min(250, settings.IndexingBatchSize);
+        }
+
+        var indexingMinBatchEnv = Environment.GetEnvironmentVariable("INDEXING_MIN_BATCH_SIZE");
+        if (!string.IsNullOrWhiteSpace(indexingMinBatchEnv) && int.TryParse(indexingMinBatchEnv, out var minBatch) && minBatch > 0)
+        {
+            settings.IndexingMinBatchSize = Math.Min(minBatch, settings.IndexingBatchSize);
+        }
+
+        settings.IndexingMinBatchSize = Math.Min(settings.IndexingMinBatchSize, settings.IndexingBatchSize);
+
+        // Max memory utilization is a fraction between 0 and 1
+        if (settings.IndexingMaxMemoryUtilization <= 0 || settings.IndexingMaxMemoryUtilization > 1)
+        {
+            settings.IndexingMaxMemoryUtilization = 0.85d;
+        }
+
+        var indexingMaxMemoryEnv = Environment.GetEnvironmentVariable("INDEXING_MAX_MEMORY_UTILIZATION");
+        if (!string.IsNullOrWhiteSpace(indexingMaxMemoryEnv)
+            && double.TryParse(indexingMaxMemoryEnv, NumberStyles.Float, CultureInfo.InvariantCulture, out var maxMem)
+            && maxMem > 0
+            && maxMem <= 1)
+        {
+            settings.IndexingMaxMemoryUtilization = maxMem;
+        }
+
+        // Delay between memory recovery attempts defaults to 5 seconds
+        if (settings.IndexingMemoryRecoveryDelaySeconds <= 0)
+        {
+            settings.IndexingMemoryRecoveryDelaySeconds = 5;
+        }
+
+        var indexingRecoveryDelayEnv = Environment.GetEnvironmentVariable("INDEXING_MEMORY_RECOVERY_DELAY_SECONDS");
+        if (!string.IsNullOrWhiteSpace(indexingRecoveryDelayEnv)
+            && int.TryParse(indexingRecoveryDelayEnv, out var recoveryDelay)
+            && recoveryDelay > 0)
+        {
+            settings.IndexingMemoryRecoveryDelaySeconds = recoveryDelay;
         }
 
         return settings;
