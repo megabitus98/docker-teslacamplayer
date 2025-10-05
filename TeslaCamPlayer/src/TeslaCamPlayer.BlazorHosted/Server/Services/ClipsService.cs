@@ -43,9 +43,44 @@ public partial class ClipsService : IClipsService
     private string CacheFilePath => _settingsProvider.Settings.CacheFilePath ?? Path.Combine(AppContext.BaseDirectory, "clips.json");
 
     private async Task<Clip[]> GetCachedAsync()
-        => File.Exists(CacheFilePath)
-            ? JsonConvert.DeserializeObject<Clip[]>(await File.ReadAllTextAsync(CacheFilePath))
-            : null;
+    {
+        if (!File.Exists(CacheFilePath))
+        {
+            return null;
+        }
+
+        Clip[] cached;
+        try
+        {
+            var json = await File.ReadAllTextAsync(CacheFilePath);
+            cached = JsonConvert.DeserializeObject<Clip[]>(json);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to read clip cache from {CacheFilePath}", CacheFilePath);
+            return null;
+        }
+
+        if (cached == null)
+        {
+            return null;
+        }
+
+        var sanitized = PruneMissingEventClips(cached, out var removedAny);
+        if (removedAny)
+        {
+            try
+            {
+                await PersistCacheAsync(sanitized);
+            }
+            catch (Exception persistEx)
+            {
+                Log.Error(persistEx, "Failed to update clip cache after pruning missing events.");
+            }
+        }
+
+        return sanitized;
+    }
 
     public async Task<Clip[]> GetClipsAsync(bool refreshCache = false)
     {
@@ -392,18 +427,66 @@ public partial class ClipsService : IClipsService
                 .Select(e => ParseClip(e, videoFiles))
                 .ToArray();
 
-            var clips = eventClips
+            var combined = eventClips
                 .Concat(recentClips.AsParallel())
                 .OrderByDescending(c => c.StartDate)
                 .ToArray();
 
-            _cache = clips;
-            await File.WriteAllTextAsync(CacheFilePath, JsonConvert.SerializeObject(clips));
+            var sanitized = PruneMissingEventClips(combined, out _);
+            _cache = sanitized;
+            await PersistCacheAsync(sanitized);
         }
         catch
         {
             // ignore partial publish errors to avoid stopping the refresh loop
         }
+    }
+
+    private async Task PersistCacheAsync(Clip[] clips)
+    {
+        var cacheDirectory = Path.GetDirectoryName(CacheFilePath);
+        if (!string.IsNullOrWhiteSpace(cacheDirectory) && !Directory.Exists(cacheDirectory))
+        {
+            Directory.CreateDirectory(cacheDirectory);
+        }
+
+        await File.WriteAllTextAsync(CacheFilePath, JsonConvert.SerializeObject(clips));
+    }
+
+    private Clip[] PruneMissingEventClips(Clip[] clips, out bool removedAny)
+    {
+        removedAny = false;
+
+        if (clips == null)
+        {
+            return null;
+        }
+
+        if (clips.Length == 0)
+        {
+            return clips;
+        }
+
+        var filtered = new List<Clip>(clips.Length);
+        foreach (var clip in clips)
+        {
+            if (clip == null)
+            {
+                removedAny = true;
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(clip.DirectoryPath) || Directory.Exists(clip.DirectoryPath))
+            {
+                filtered.Add(clip);
+                continue;
+            }
+
+            removedAny = true;
+            Log.Information("Removed cached event at {DirectoryPath} because it no longer exists on disk.", clip.DirectoryPath);
+        }
+
+        return removedAny ? filtered.ToArray() : clips;
     }
 
     private static IEnumerable<Clip> GetRecentClips(List<VideoFile> recentVideoFiles)

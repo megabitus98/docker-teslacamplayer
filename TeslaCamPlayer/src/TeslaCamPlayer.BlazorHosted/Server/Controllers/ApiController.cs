@@ -178,8 +178,14 @@ public class ApiController : ControllerBase
         if (request == null)
             return BadRequest("Missing request");
 
+        if (string.IsNullOrWhiteSpace(request.ClipDirectoryPath))
+        {
+            Log.Warning("StartExport called with empty clip path.");
+            return BadRequest("Clip path is invalid");
+        }
+
         // Validate path is under root
-        var fullPath = Path.GetFullPath(request.ClipDirectoryPath ?? string.Empty);
+        var fullPath = Path.GetFullPath(request.ClipDirectoryPath);
         if (!IsUnderRootPath(fullPath))
             return BadRequest("Clip path is invalid");
 

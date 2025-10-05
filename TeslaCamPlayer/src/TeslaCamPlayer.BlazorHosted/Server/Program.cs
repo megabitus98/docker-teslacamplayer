@@ -1,5 +1,6 @@
 using Serilog;
 using Serilog.Events;
+using TeslaCamPlayer.BlazorHosted.Server.Hubs;
 using TeslaCamPlayer.BlazorHosted.Server.Providers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services;
@@ -19,6 +20,7 @@ builder.Services.AddSingleton<IRefreshProgressService, RefreshProgressService>()
 builder.Services.AddTransient<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddHostedService<ExportCleanupService>();
+builder.Services.AddSignalR();
 #if WINDOWS
 builder.Services.AddTransient<IFfProbeService, FfProbeServiceWindows>();
 #elif DOCKER
@@ -61,6 +63,7 @@ app.UseRouting();
 
 app.MapRazorPages();
 app.MapControllers();
+app.MapHub<StatusHub>("/hubs/status");
 app.MapFallbackToFile("index.html");
 
 app.Run();

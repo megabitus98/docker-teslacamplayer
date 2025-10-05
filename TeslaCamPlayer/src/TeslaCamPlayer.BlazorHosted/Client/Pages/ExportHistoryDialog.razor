@@ -1,5 +1,10 @@
+@using System
+@using System.Linq
+@using System.Threading
 @using MudBlazor
+@using TeslaCamPlayer.BlazorHosted.Client.Services
 @using TeslaCamPlayer.BlazorHosted.Shared.Models
+@implements IAsyncDisposable
 
 <MudDialog Class="pa-2" MaxWidth="MaxWidth.Large" FullWidth="true">
     <DialogContent>
@@ -49,6 +54,7 @@
 @code {
     [CascadingParameter] MudDialogInstance MudDialog { get; set; }
     [Inject] HttpClient Http { get; set; }
+    [Inject] StatusHubClient StatusHubClient { get; set; }
 
     public class ExportItemVm
     {
@@ -60,29 +66,86 @@
         public ExportStatus Status { get; set; }
     }
 
-    private List<ExportItemVm> _items = new();
-    private System.Timers.Timer _timer;
-    private HashSet<string> _canceling = new();
+    private readonly SemaphoreSlim _loadSemaphore = new(1, 1);
+    private readonly HashSet<string> _canceling = new();
+    private readonly List<ExportItemVm> _items = new();
+    private IDisposable _subscription;
+    private bool _subscribedToAll;
 
     protected override async Task OnInitializedAsync()
     {
-        _timer = new System.Timers.Timer(1000);
-        _timer.Elapsed += async (_, __) => await InvokeAsync(async () => await LoadAsync());
-        _timer.Enabled = true;
+        _subscription = StatusHubClient.RegisterExportHandler(HandleExportStatusAsync);
+        await StatusHubClient.EnsureConnectedAsync();
+        await StatusHubClient.SubscribeToAllExportsAsync();
+        _subscribedToAll = true;
         await LoadAsync();
+    }
+
+    private async Task HandleExportStatusAsync(ExportStatus status)
+    {
+        if (status == null)
+            return;
+
+        var existing = _items.FirstOrDefault(i => string.Equals(i.JobId, status.JobId, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            existing.Status = status;
+        }
+        else
+        {
+            _items.Insert(0, new ExportItemVm
+            {
+                JobId = status.JobId,
+                Status = status,
+                FileName = status.JobId,
+                CreatedUtc = DateTime.UtcNow
+            });
+        }
+
+        if (status.State is ExportState.Completed or ExportState.Failed or ExportState.Canceled)
+        {
+            _canceling.Remove(status.JobId);
+        }
+
+        await InvokeAsync(StateHasChanged);
+
+        if (status.State == ExportState.Completed)
+        {
+            await LoadAsync();
+        }
     }
 
     private async Task LoadAsync()
     {
+        if (!await _loadSemaphore.WaitAsync(0))
+        {
+            return;
+        }
+
         try
         {
             var data = await Http.GetFromJsonAsync<List<ExportItemVm>>("Api/ListExports");
-            _items = data ?? new List<ExportItemVm>();
-            // Drop any 'canceling' flags for jobs no longer running
-            _canceling.RemoveWhere(id => _items.All(x => x.JobId != id || (x.Status?.State != ExportState.Running && x.Status?.State != ExportState.Pending)));
-            StateHasChanged();
+            await InvokeAsync(() =>
+            {
+                _items.Clear();
+                if (data != null)
+                {
+                    _items.AddRange(data);
+                }
+
+                // Drop any 'canceling' flags for jobs no longer running
+                _canceling.RemoveWhere(id => _items.All(x => x.JobId != id || (x.Status?.State != ExportState.Running && x.Status?.State != ExportState.Pending)));
+                StateHasChanged();
+            });
         }
-        catch { }
+        catch
+        {
+            // Ignore transient load errors; updates will retry
+        }
+        finally
+        {
+            _loadSemaphore.Release();
+        }
     }
 
     private async Task Cancel(string jobId)
@@ -91,11 +154,16 @@
             return;
 
         _canceling.Add(jobId);
+        await InvokeAsync(StateHasChanged);
+
         try
         {
             await Http.PostAsync($"Api/CancelExport?jobId={Uri.EscapeDataString(jobId)}", new StringContent(string.Empty));
         }
-        catch { }
+        catch
+        {
+            // Ignore cancellation errors
+        }
     }
 
     private static string FormatSize(long bytes)
@@ -113,8 +181,25 @@
 
     void Close()
     {
-        try { _timer?.Stop(); } catch { }
-        try { _timer?.Dispose(); } catch { }
         MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _subscription?.Dispose();
+
+        if (_subscribedToAll)
+        {
+            try
+            {
+                await StatusHubClient.UnsubscribeFromAllExportsAsync();
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
+
+        _loadSemaphore.Dispose();
     }
 }

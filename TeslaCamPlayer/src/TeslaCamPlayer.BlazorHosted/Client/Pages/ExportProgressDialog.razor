@@ -1,6 +1,9 @@
+@using System
 @using MudBlazor
 @using TeslaCamPlayer.BlazorHosted.Shared.Models
 @using TeslaCamPlayer.BlazorHosted.Client.Helpers
+@using TeslaCamPlayer.BlazorHosted.Client.Services
+@implements IAsyncDisposable
 
 <MudDialog Class="pa-2" MaxWidth="MaxWidth.Small" FullWidth="true">
     <DialogContent>
@@ -56,40 +59,39 @@
     [Parameter] public string JobId { get; set; }
 
     [Inject] private HttpClient HttpClient { get; set; }
+    [Inject] private StatusHubClient StatusHubClient { get; set; }
 
     private ExportStatus _status;
-    private CancellationTokenSource _cts;
     private bool _isCancelling;
+    private IDisposable _subscription;
+    private bool _subscribedToJob;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
-        _cts = new CancellationTokenSource();
-        _ = PollAsync(_cts.Token);
+        _subscription = StatusHubClient.RegisterExportHandler(HandleExportStatusAsync);
+        await StatusHubClient.EnsureConnectedAsync();
+
+        if (!string.IsNullOrWhiteSpace(JobId))
+        {
+            await StatusHubClient.SubscribeToExportAsync(JobId);
+            _subscribedToJob = true;
+            _status = new ExportStatus { JobId = JobId, State = ExportState.Pending };
+        }
     }
 
-    private async Task PollAsync(CancellationToken token)
+    private async Task HandleExportStatusAsync(ExportStatus status)
     {
-        if (string.IsNullOrWhiteSpace(JobId))
+        if (status == null || !string.Equals(status.JobId, JobId, StringComparison.OrdinalIgnoreCase))
             return;
 
-        try
-        {
-            while (!token.IsCancellationRequested)
-            {
-                var st = await HttpClient.GetFromNewtonsoftJsonAsync<ExportStatus>($"Api/ExportStatus?jobId={Uri.EscapeDataString(JobId)}");
-                _status = st;
-                await InvokeAsync(StateHasChanged);
+        _status = status;
 
-                if (st == null || st.State == ExportState.Completed || st.State == ExportState.Failed || st.State == ExportState.Canceled)
-                    break;
-
-                await Task.Delay(500, token);
-            }
-        }
-        catch
+        if (status.State is ExportState.Completed or ExportState.Failed or ExportState.Canceled)
         {
-            // swallow polling errors; UI will reflect last known status
+            _isCancelling = false;
         }
+
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task CancelExport()
@@ -98,22 +100,36 @@
             return;
 
         _isCancelling = true;
+        await InvokeAsync(StateHasChanged);
         try
         {
             await HttpClient.PostAsync($"Api/CancelExport?jobId={Uri.EscapeDataString(JobId)}", new StringContent(string.Empty));
         }
-        catch { }
+        catch
+        {
+            // Ignore cancellation errors; hub updates will surface issues
+        }
     }
 
     void Close()
     {
-        try { _cts?.Cancel(); } catch { }
         MudDialog.Close(DialogResult.Ok(true));
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        try { _cts?.Cancel(); } catch { }
-        try { _cts?.Dispose(); } catch { }
+        _subscription?.Dispose();
+
+        if (_subscribedToJob && !string.IsNullOrWhiteSpace(JobId))
+        {
+            try
+            {
+                await StatusHubClient.UnsubscribeFromExportAsync(JobId);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
     }
 }

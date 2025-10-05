@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Components;
+﻿using System;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using MudBlazor;
@@ -6,14 +7,16 @@ using System.Timers;
 using TeslaCamPlayer.BlazorHosted.Client.Components;
 using TeslaCamPlayer.BlazorHosted.Client.Helpers;
 using TeslaCamPlayer.BlazorHosted.Client.Models;
+using TeslaCamPlayer.BlazorHosted.Client.Services;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 using System.Reflection;
 using System.Net.Http.Json;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace TeslaCamPlayer.BlazorHosted.Client.Pages;
 
-public partial class Index : ComponentBase
+public partial class Index : ComponentBase, IAsyncDisposable
 {
     private const int EventItemHeight = 60;
 
@@ -22,6 +25,9 @@ public partial class Index : ComponentBase
 
     [Inject]
     private IJSRuntime JsRuntime { get; set; }
+
+    [Inject]
+    private StatusHubClient StatusHubClient { get; set; }
 
     private Clip[] _clips;
     private Clip[] _filteredclips;
@@ -38,7 +44,6 @@ public partial class Index : ComponentBase
     private EventFilterValues _eventFilter = new();
     private TeslaCamPlayer.BlazorHosted.Client.Models.CameraFilterValues _cameraFilter = new();
     private RefreshStatus _refreshStatus = new();
-    private CancellationTokenSource _refreshStatusCts;
     private bool _enableDelete = true;
     private bool _isExportMode;
     private string _exportFormat = "mp4";
@@ -49,13 +54,23 @@ public partial class Index : ComponentBase
     private bool _exportIncludeLocation = true;
     private string _exportJobId;
     private ExportStatus _exportStatus;
-    private CancellationTokenSource _exportPollCts;
     private bool _showExportPanel;
+    private IDisposable _refreshStatusSubscription;
+    private IDisposable _exportStatusSubscription;
+    private readonly SemaphoreSlim _clipsReloadLock = new(1, 1);
+    private int _lastRefreshProcessed = -1;
+    private DateTime _lastClipsReloadUtc = DateTime.MinValue;
+    private bool _seenActiveRefresh;
 
     protected override async Task OnInitializedAsync()
     {
         _scrollDebounceTimer = new(100);
         _scrollDebounceTimer.Elapsed += ScrollDebounceTimerTick;
+
+        _refreshStatusSubscription ??= StatusHubClient.RegisterRefreshHandler(HandleRefreshStatusAsync);
+        _exportStatusSubscription ??= StatusHubClient.RegisterExportHandler(HandleExportStatusAsync);
+
+        await StatusHubClient.EnsureConnectedAsync();
 
         try
         {
@@ -90,9 +105,14 @@ public partial class Index : ComponentBase
         await InvokeAsync(StateHasChanged);
 
         _setDatePickerInitialDate = false;
+
         if (refreshCache)
         {
-            StartRefreshStatusPolling();
+            _refreshStatus = new RefreshStatus { IsRefreshing = true };
+            _lastRefreshProcessed = -1;
+            _lastClipsReloadUtc = DateTime.MinValue;
+            _seenActiveRefresh = false;
+            await InvokeAsync(StateHasChanged);
         }
 
         _clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=" + refreshCache);
@@ -102,81 +122,113 @@ public partial class Index : ComponentBase
         // If we didn't explicitly request a refresh but server may be indexing in the background (first run), start polling
         if (!refreshCache && (_clips == null || _clips.Length == 0))
         {
-            StartRefreshStatusPolling();
+            _lastRefreshProcessed = -1;
+            _lastClipsReloadUtc = DateTime.MinValue;
+            _seenActiveRefresh = false;
         }
     }
 
-    private void StartRefreshStatusPolling()
+    private async Task HandleRefreshStatusAsync(RefreshStatus status)
     {
-        StopRefreshStatusPolling();
-        _refreshStatus = new();
-        _refreshStatusCts = new CancellationTokenSource();
-        _ = Task.Run(async () =>
+        status ??= new RefreshStatus();
+
+        var now = DateTime.UtcNow;
+        var shouldReloadClips = false;
+
+        if (status.IsRefreshing)
+        {
+            _seenActiveRefresh = true;
+        }
+
+        if (status.Processed != _lastRefreshProcessed)
+        {
+            if ((now - _lastClipsReloadUtc).TotalMilliseconds >= 500)
+            {
+                shouldReloadClips = true;
+                _lastClipsReloadUtc = now;
+            }
+
+            _lastRefreshProcessed = status.Processed;
+        }
+
+        _refreshStatus = status;
+        await InvokeAsync(StateHasChanged);
+
+        if (shouldReloadClips)
+        {
+            await ReloadClipsAsync();
+        }
+
+        if (!status.IsRefreshing && _seenActiveRefresh && (status.Total > 0 || status.Processed > 0))
+        {
+            _seenActiveRefresh = false;
+            await ReloadClipsAsync();
+        }
+    }
+
+    private async Task ReloadClipsAsync()
+    {
+        if (!await _clipsReloadLock.WaitAsync(0))
+        {
+            return;
+        }
+
+        try
+        {
+            var clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=false");
+            await InvokeAsync(() =>
+            {
+                _clips = clips ?? Array.Empty<Clip>();
+                FilterClips();
+            });
+        }
+        catch
+        {
+            // Transient failures are ignored; subsequent updates will resync
+        }
+        finally
+        {
+            _clipsReloadLock.Release();
+        }
+    }
+
+    private async Task HandleExportStatusAsync(ExportStatus status)
+    {
+        if (status == null)
+            return;
+
+        if (!string.Equals(status.JobId, _exportJobId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _exportStatus = status;
+        await InvokeAsync(StateHasChanged);
+
+        if (status.State is ExportState.Completed or ExportState.Failed or ExportState.Canceled)
+        {
+            await StatusHubClient.UnsubscribeFromExportAsync(status.JobId);
+        }
+    }
+
+    private async Task StopExportMonitoringAsync(bool requestRender = true)
+    {
+        var jobId = _exportJobId;
+        if (!string.IsNullOrWhiteSpace(jobId))
         {
             try
             {
-                var lastProcessed = -1;
-                var lastClipsUpdate = DateTime.MinValue;
-                bool seenActiveRefresh = false;
-                while (!_refreshStatusCts.IsCancellationRequested)
-                {
-                    var status = await HttpClient.GetFromNewtonsoftJsonAsync<RefreshStatus>("Api/GetRefreshStatus");
-                    _refreshStatus = status ?? new RefreshStatus();
-                    var shouldUpdateClips = false;
-                    if (status != null)
-                    {
-                        if (status.IsRefreshing)
-                            seenActiveRefresh = true;
-                        if (status.Processed != lastProcessed)
-                        {
-                            // throttle clip list updates to ~2/sec
-                            shouldUpdateClips = (DateTime.UtcNow - lastClipsUpdate).TotalMilliseconds > 500;
-                        }
-                        lastProcessed = status.Processed;
-                    }
-
-                    if (shouldUpdateClips)
-                    {
-                        try
-                        {
-                            var clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=false");
-                            await InvokeAsync(() =>
-                            {
-                                _clips = clips ?? Array.Empty<Clip>();
-                                FilterClips();
-                            });
-                            lastClipsUpdate = DateTime.UtcNow;
-                        }
-                        catch { }
-                    }
-
-                    await InvokeAsync(StateHasChanged);
-
-                    // Stop polling when we've observed an active refresh that has now completed.
-                    if (status != null && !status.IsRefreshing && seenActiveRefresh && (status.Total > 0 || status.Processed > 0))
-                        break;
-
-                    await Task.Delay(300, _refreshStatusCts.Token);
-                }
+                await StatusHubClient.UnsubscribeFromExportAsync(jobId);
             }
             catch
             {
-                // ignore polling errors/cancellation
+                // Ignore errors during cleanup
             }
-        }, _refreshStatusCts.Token);
-    }
-
-    private void StopRefreshStatusPolling()
-    {
-        try
-        {
-            _refreshStatusCts?.Cancel();
         }
-        catch { }
-        finally
+
+        _exportJobId = null;
+        _exportStatus = null;
+        if (requestRender)
         {
-            _refreshStatusCts?.Dispose();
-            _refreshStatusCts = null;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -192,14 +244,12 @@ public partial class Index : ComponentBase
         }
     }
 
-    private void ToggleExportMode()
+    private async Task ToggleExportMode()
     {
         _isExportMode = !_isExportMode;
         if (!_isExportMode)
         {
-            StopExportPolling();
-            _exportJobId = null;
-            _exportStatus = null;
+            await StopExportMonitoringAsync();
             _showExportPanel = false;
         }
     }
@@ -268,9 +318,13 @@ public partial class Index : ComponentBase
             return;
 
         var (w, h) = ParseResolution();
+        var clipPath = _activeClip.DirectoryPath;
+        if (string.IsNullOrWhiteSpace(clipPath))
+            return;
+
         var request = new ExportRequest
         {
-            ClipDirectoryPath = _activeClip.DirectoryPath,
+            ClipDirectoryPath = clipPath,
             StartTimeUtc = startUtc,
             EndTimeUtc = endUtc,
             OrderedCameras = cams.ToList(),
@@ -287,40 +341,20 @@ public partial class Index : ComponentBase
         var resp = await HttpClient.PostAsJsonAsync("Api/StartExport", request);
         resp.EnsureSuccessStatusCode();
         var body = await resp.Content.ReadFromJsonAsync<Dictionary<string, string>>();
-        _exportJobId = body?["jobId"];
-        _exportStatus = null;
-        StartExportPolling();
-        await ShowExportProgressAsync();
-    }
+        var jobId = body != null && body.TryGetValue("jobId", out var value) ? value : null;
+        if (string.IsNullOrWhiteSpace(jobId))
+            return;
 
-    private void StartExportPolling()
-    {
-        StopExportPolling();
-        if (string.IsNullOrWhiteSpace(_exportJobId)) return;
-        _exportPollCts = new CancellationTokenSource();
-        _ = Task.Run(async () =>
+        if (!string.IsNullOrWhiteSpace(_exportJobId) && !string.Equals(_exportJobId, jobId, StringComparison.OrdinalIgnoreCase))
         {
-            try
-            {
-                while (!_exportPollCts.IsCancellationRequested && !string.IsNullOrWhiteSpace(_exportJobId))
-                {
-                    var st = await HttpClient.GetFromNewtonsoftJsonAsync<ExportStatus>($"Api/ExportStatus?jobId={Uri.EscapeDataString(_exportJobId)}");
-                    _exportStatus = st;
-                    await InvokeAsync(StateHasChanged);
-                    if (st == null || st.State == ExportState.Completed || st.State == ExportState.Failed || st.State == ExportState.Canceled)
-                        break;
-                    await Task.Delay(500, _exportPollCts.Token);
-                }
-            }
-            catch { }
-        }, _exportPollCts.Token);
-    }
+            await StatusHubClient.UnsubscribeFromExportAsync(_exportJobId);
+        }
 
-    private void StopExportPolling()
-    {
-        try { _exportPollCts?.Cancel(); } catch { }
-        try { _exportPollCts?.Dispose(); } catch { }
-        _exportPollCts = null;
+        _exportJobId = jobId;
+        _exportStatus = new ExportStatus { JobId = jobId, State = ExportState.Pending };
+        await StatusHubClient.SubscribeToExportAsync(jobId);
+        await InvokeAsync(StateHasChanged);
+        await ShowExportProgressAsync();
     }
 
     private async Task ShowExportProgressAsync()
@@ -563,5 +597,24 @@ public partial class Index : ComponentBase
         {
             return Assembly.GetExecutingAssembly().GetName().Version.ToString();
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            _scrollDebounceTimer?.Dispose();
+        }
+        catch
+        {
+            // ignore disposal errors
+        }
+
+        _refreshStatusSubscription?.Dispose();
+        _exportStatusSubscription?.Dispose();
+
+        await StopExportMonitoringAsync(false);
+
+        _clipsReloadLock.Dispose();
     }
 }

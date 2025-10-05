@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.SignalR;
 using Serilog;
 using System;
 using System.Collections.Concurrent;
@@ -10,6 +11,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using TeslaCamPlayer.BlazorHosted.Server.Hubs;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
@@ -20,26 +22,84 @@ public class ExportService : IExportService
 {
     private readonly ISettingsProvider _settingsProvider;
     private readonly IClipsService _clipsService;
+    private readonly IHubContext<StatusHub> _hubContext;
 
     private readonly ConcurrentDictionary<string, ExportStatus> _status = new();
     private readonly ConcurrentDictionary<string, string> _outputs = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _cancellations = new();
 
-    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService)
+    private static ExportStatus CloneStatus(ExportStatus status)
+        => status == null
+            ? null
+            : new ExportStatus
+            {
+                JobId = status.JobId,
+                State = status.State,
+                Percent = status.Percent,
+                Eta = status.Eta,
+                OutputUrl = status.OutputUrl,
+                ErrorMessage = status.ErrorMessage
+            };
+
+    private void BroadcastStatus(string jobId, ExportStatus status, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(jobId) || status == null)
+        {
+            return;
+        }
+
+        status.JobId ??= jobId;
+
+        var snapshot = CloneStatus(status);
+        snapshot.JobId = jobId;
+        _status[jobId] = snapshot;
+
+        if (string.Equals(reason, "progress", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Debug(
+                "Broadcasting export progress. JobId={JobId}, Percent={Percent:F2}, Eta={Eta}",
+                jobId,
+                snapshot.Percent,
+                snapshot.Eta);
+        }
+        else
+        {
+            Log.Information(
+                "Broadcasting export status change. JobId={JobId}, State={State}, Percent={Percent:F2}, Reason={Reason}",
+                jobId,
+                snapshot.State,
+                snapshot.Percent,
+                reason);
+        }
+
+        var jobGroup = StatusHub.GetExportGroupName(jobId);
+        var allGroup = StatusHub.AllExportsGroupName;
+
+        var broadcastTask = Task.WhenAll(
+            _hubContext.Clients.Group(jobGroup).SendAsync("ExportStatusUpdated", snapshot),
+            _hubContext.Clients.Group(allGroup).SendAsync("ExportStatusUpdated", snapshot));
+
+        _ = broadcastTask.ContinueWith(
+            t => Log.Error(t.Exception, "Failed to broadcast export status update. JobId={JobId}, Reason={Reason}", jobId, reason),
+            TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
+        _hubContext = hubContext;
     }
 
     public Task<string> StartExportAsync(ExportRequest request)
     {
         var jobId = Guid.NewGuid().ToString("N");
-        _status[jobId] = new ExportStatus
+        BroadcastStatus(jobId, new ExportStatus
         {
             JobId = jobId,
             State = ExportState.Pending,
             Percent = 0
-        };
+        }, "pending");
 
         var cts = new CancellationTokenSource();
         _cancellations[jobId] = cts;
@@ -50,7 +110,7 @@ public class ExportService : IExportService
 
     public ExportStatus GetStatus(string jobId)
     {
-        return _status.TryGetValue(jobId, out var st) ? st : null;
+        return _status.TryGetValue(jobId, out var st) ? CloneStatus(st) : null;
     }
 
     public bool TryGetOutputPath(string jobId, out string path)
@@ -75,7 +135,16 @@ public class ExportService : IExportService
             if (_status.TryGetValue(jobId, out var current))
             {
                 current.State = ExportState.Running;
-                _status[jobId] = current;
+                BroadcastStatus(jobId, current, "running");
+            }
+            else
+            {
+                BroadcastStatus(jobId, new ExportStatus
+                {
+                    JobId = jobId,
+                    State = ExportState.Running,
+                    Percent = 0
+                }, "running");
             }
 
             // Validate request
@@ -368,13 +437,13 @@ public class ExportService : IExportService
                             var sec = outMs / 1000000.0;
                             var pct = Math.Clamp(totalSeconds > 0 ? (sec / totalSeconds) * 100.0 : 0, 0, 100);
                             var eta = totalSeconds > 0 ? TimeSpan.FromSeconds(Math.Max(0, totalSeconds - sec)) : (TimeSpan?)null;
-                            _status[jobId] = new ExportStatus
+                            BroadcastStatus(jobId, new ExportStatus
                             {
                                 JobId = jobId,
                                 State = ExportState.Running,
                                 Percent = pct,
                                 Eta = eta
-                            };
+                            }, "progress");
                         }
                     }
                 }
@@ -402,7 +471,7 @@ public class ExportService : IExportService
 
             if (cancel.IsCancellationRequested)
             {
-                _status[jobId] = new ExportStatus { JobId = jobId, State = ExportState.Canceled, Percent = 0 };
+                BroadcastStatus(jobId, new ExportStatus { JobId = jobId, State = ExportState.Canceled, Percent = 0 }, "canceled");
                 SafeDelete(outputFile);
                 return;
             }
@@ -412,23 +481,23 @@ public class ExportService : IExportService
 
             var url = BuildDownloadUrl(outputFile);
             _outputs[jobId] = outputFile;
-            _status[jobId] = new ExportStatus
+            BroadcastStatus(jobId, new ExportStatus
             {
                 JobId = jobId,
                 State = ExportState.Completed,
                 Percent = 100,
                 OutputUrl = url
-            };
+            }, "completed");
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Export {JobId} failed", jobId);
-            _status[jobId] = new ExportStatus
+            BroadcastStatus(jobId, new ExportStatus
             {
                 JobId = jobId,
                 State = ExportState.Failed,
                 ErrorMessage = ex.Message
-            };
+            }, "failed");
         }
         finally
         {
