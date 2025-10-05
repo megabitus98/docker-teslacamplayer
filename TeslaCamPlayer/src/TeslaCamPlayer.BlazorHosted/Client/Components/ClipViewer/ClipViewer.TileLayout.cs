@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Components;
 using TeslaCamPlayer.BlazorHosted.Client.Models;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 
@@ -18,6 +20,12 @@ public partial class ClipViewer
         RightPillar
     }
 
+    private enum GridMode
+    {
+        Locked,
+        Scale
+    }
+
     private sealed class TileDefinition
     {
         private readonly Func<ClipVideoSegment, VideoFile> _segmentSelector;
@@ -29,7 +37,8 @@ public partial class ClipViewer
             string dataCamera,
             string videoKey,
             Func<ClipVideoSegment, VideoFile> segmentSelector,
-            Func<CameraFilterValues, bool> isEnabledPredicate)
+            Func<CameraFilterValues, bool> isEnabledPredicate,
+            string gridArea)
         {
             Tile = tile;
             Label = label;
@@ -37,6 +46,7 @@ public partial class ClipViewer
             VideoKey = videoKey;
             _segmentSelector = segmentSelector;
             _isEnabledPredicate = isEnabledPredicate;
+            GridArea = gridArea;
         }
 
         public Tile Tile { get; }
@@ -44,6 +54,8 @@ public partial class ClipViewer
         public string DataCamera { get; }
         public string VideoKey { get; }
         public VideoPlayer Player { get; set; }
+        public string GridArea { get; }
+        public ElementReference ElementRef { get; set; }
 
         public string SourceFor(ClipVideoSegment segment)
             => _segmentSelector?.Invoke(segment)?.Url;
@@ -69,12 +81,12 @@ public partial class ClipViewer
     {
         _tiles = new[]
         {
-            new TileDefinition(Tile.LeftPillar, "Left Pillar", "left-pillar", "L-BPILLAR", segment => segment?.CameraLeftBPillar, filter => filter.ShowLeftPillar),
-            new TileDefinition(Tile.Front, "Front", "front", "128D7AB3", segment => segment?.CameraFront, filter => filter.ShowFront),
-            new TileDefinition(Tile.RightPillar, "Right Pillar", "right-pillar", "R-BPILLAR", segment => segment?.CameraRightBPillar, filter => filter.ShowRightPillar),
-            new TileDefinition(Tile.LeftRepeater, "Left Repeater", "left-repeater", "D1916B24", segment => segment?.CameraLeftRepeater, filter => filter.ShowLeftRepeater),
-            new TileDefinition(Tile.Back, "Back", "back", "66EC38D4", segment => segment?.CameraBack, filter => filter.ShowBack),
-            new TileDefinition(Tile.RightRepeater, "Right Repeater", "right-repeater", "87B15DCA", segment => segment?.CameraRightRepeater, filter => filter.ShowRightRepeater)
+            new TileDefinition(Tile.LeftPillar, "Left Pillar", "left-pillar", "L-BPILLAR", segment => segment?.CameraLeftBPillar, filter => filter.ShowLeftPillar, "left-pillar"),
+            new TileDefinition(Tile.Front, "Front", "front", "128D7AB3", segment => segment?.CameraFront, filter => filter.ShowFront, "front"),
+            new TileDefinition(Tile.RightPillar, "Right Pillar", "right-pillar", "R-BPILLAR", segment => segment?.CameraRightBPillar, filter => filter.ShowRightPillar, "right-pillar"),
+            new TileDefinition(Tile.LeftRepeater, "Left Repeater", "left-repeater", "D1916B24", segment => segment?.CameraLeftRepeater, filter => filter.ShowLeftRepeater, "left-repeater"),
+            new TileDefinition(Tile.Back, "Back", "back", "66EC38D4", segment => segment?.CameraBack, filter => filter.ShowBack, "back"),
+            new TileDefinition(Tile.RightRepeater, "Right Repeater", "right-repeater", "87B15DCA", segment => segment?.CameraRightRepeater, filter => filter.ShowRightRepeater, "right-repeater")
         };
 
         _tileLookup = _tiles.ToDictionary(t => t.Tile);
@@ -96,6 +108,11 @@ public partial class ClipViewer
 
     private string GridStyle()
     {
+        if (IsGridLocked)
+        {
+            return "grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); grid-template-areas: \"left-pillar front right-pillar\" \"left-repeater back right-repeater\"; grid-auto-rows: minmax(0, 1fr);";
+        }
+
         var visible = VisibleTileCount();
         int cols = visible switch
         {
@@ -108,5 +125,29 @@ public partial class ClipViewer
         };
 
         return $"grid-template-columns: repeat({cols}, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr);";
+    }
+
+    private bool IsGridLocked => _gridMode == GridMode.Locked;
+
+    private string GetTileStyle(TileDefinition tile)
+    {
+        if (!IsGridLocked || string.IsNullOrWhiteSpace(tile.GridArea))
+        {
+            return null;
+        }
+
+        if (_fullscreenTile == tile.Tile)
+        {
+            return null;
+        }
+
+        return $"grid-area: {tile.GridArea};";
+    }
+
+    private async Task ToggleGridMode()
+    {
+        _gridMode = _gridMode == GridMode.Locked ? GridMode.Scale : GridMode.Locked;
+
+        await InvokeAsync(StateHasChanged);
     }
 }

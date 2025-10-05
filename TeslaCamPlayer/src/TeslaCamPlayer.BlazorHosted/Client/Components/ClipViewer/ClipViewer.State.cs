@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using TeslaCamPlayer.BlazorHosted.Client.Models;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
@@ -24,6 +25,10 @@ public partial class ClipViewer
     private CancellationTokenSource _loadSegmentCts = new();
     private CameraFilterValues _lastAppliedCameraFilter = new();
     private Tile? _fullscreenTile;
+    private GridMode _gridMode = GridMode.Locked;
+    private bool _isFullscreenPending;
+    private double[] _pendingFullscreenStartRect;
+    private ElementReference _gridElement;
     private DotNetObjectReference<ClipViewer> _objRef;
     private (double Start, double End) _exportRange;
 

@@ -7,12 +7,14 @@
             Responsive auto-fit grid of camera tiles.
             When a tile enters fullscreen, apply class 'fullscreen-active' on the grid and 'is-fullscreen' on the active tile.
         -->
-        <div class="video-grid @(IsFullscreen ? "fullscreen-active" : null)" style="@GridStyle()">
+        <div class="video-grid @(IsFullscreen ? "fullscreen-active" : null) @(IsGridLocked ? "grid-locked" : null)" style="@GridStyle()" @ref="_gridElement">
             @foreach (var tile in _tiles)
             {
                 <div class="grid-tile @GetTileCss(tile.Tile) @(IsTileVisible(tile.Tile) ? null : "is-hidden")"
                      data-camera="@tile.DataCamera" data-visible="@(IsTileVisible(tile.Tile).ToString().ToLower())"
                      role="button" tabindex="0" aria-label="View @tile.Label fullscreen"
+                     @ref="tile.ElementRef"
+                     style="@GetTileStyle(tile)"
                      @onclick="@(() => ToggleFullscreen(tile.Tile))"
                      @onkeydown="@(e => TileKeyDown(e, tile.Tile))">
                     <VideoPlayer @key="@tile.VideoKey" @ref="tile.Player" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
@@ -45,6 +47,16 @@
             <MudIconButton Icon="@Icons.Material.Filled.SkipNext" Size="Size.Large" OnClick="@NextButtonClicked" />
             <MudTooltip Text="Jump to event marker">
                 <MudIconButton Icon="@Icons.Material.Filled.RadioButtonChecked" Size="Size.Medium" OnClick="@JumpToEventMarker" />
+            </MudTooltip>
+            <MudTooltip Text="@(IsGridLocked ? "Grid locked — tiles stay fixed" : "Grid scaling — layout adapts to visible cameras")"
+                        Class="grid-toggle-wrapper">
+                <MudIconButton Icon="@(IsGridLocked ? Icons.Material.Filled.GridOn : Icons.Material.Filled.GridView)"
+                               Size="Size.Medium"
+                               Variant="Variant.Outlined"
+                               Color="@(IsGridLocked ? Color.Primary : Color.Default)"
+                               AriaLabel="@(IsGridLocked ? "Grid locked" : "Grid scaling")"
+                               OnClick="@ToggleGridMode"
+                               Class="grid-mode-toggle" />
             </MudTooltip>
         </div>
         <div class="seeker-slider-container">

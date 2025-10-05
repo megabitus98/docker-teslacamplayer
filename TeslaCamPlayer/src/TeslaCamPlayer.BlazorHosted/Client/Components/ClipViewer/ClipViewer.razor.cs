@@ -105,7 +105,7 @@ public partial class ClipViewer : ComponentBase, IDisposable
         => await ScrubToSliderTime();
 
     private static Task AwaitUiUpdate()
-        => Task.Delay(100);
+        => Task.CompletedTask;
 
     // Export helpers
     public (DateTime StartUtc, DateTime EndUtc) GetSelectedInterval()
