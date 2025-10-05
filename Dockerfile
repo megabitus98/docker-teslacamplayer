@@ -5,7 +5,6 @@ ARG TESLACAMPLAYER_VERSION
 
 # install build dependencies
 RUN apk add --no-cache \
-    binutils \
     nodejs \
     npm
 
@@ -13,37 +12,26 @@ RUN apk add --no-cache \
 WORKDIR /src
 COPY TeslaCamPlayer/ /src/TeslaCamPlayer/
 
-# build server
+# build server (amd64)
 WORKDIR /src/TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server
 RUN if [ -n "${TESLACAMPLAYER_VERSION}" ]; then \
       sed -i'' -e "s/<AssemblyVersion>[0-9.*]\+<\/AssemblyVersion>/<AssemblyVersion>${TESLACAMPLAYER_VERSION}<\/AssemblyVersion>/g" TeslaCamPlayer.BlazorHosted.Server.csproj; \
     fi && \
     dotnet restore && \
-    dotnet publish -c Release -o /tmp/build --no-restore --self-contained true -r linux-musl-x64 \
-      /p:PublishTrimmed=true \
-      /p:TrimMode=link \
-      /p:PublishSingleFile=true \
-      /p:EnableCompressionInSingleFile=true \
-      /p:IncludeNativeLibrariesForSelfExtract=false \
-      /p:StripSymbols=true \
-      /p:DebugType=None \
-      /p:DefineConstants=DOCKER \
-      ${TESLACAMPLAYER_VERSION:+/p:AssemblyVersion=${TESLACAMPLAYER_VERSION}} && \
-    if [ -f /tmp/build/TeslaCamPlayer.BlazorHosted.Server ]; then \
-      strip --strip-unneeded /tmp/build/TeslaCamPlayer.BlazorHosted.Server; \
-    fi
+    dotnet publish -c Release -o /tmp/build --no-restore --self-contained true -r linux-x64 /p:PublishTrimmed=true /p:DefineConstants=DOCKER ${TESLACAMPLAYER_VERSION:+/p:AssemblyVersion=${TESLACAMPLAYER_VERSION}}
 
 # build client assets and assemble output
 WORKDIR /src/TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client
-RUN npm install --no-audit --progress=false && \
-    npx gulp default && \
+RUN npm install && \
+    npm install -g gulp && \
+    gulp default && \
     rm -rf /tmp/build/lib && \
     mkdir -p /out/app/teslacamplayer/wwwroot && \
     cp -r /tmp/build/* /out/app/teslacamplayer/ && \
     cp -r wwwroot/css/ /out/app/teslacamplayer/wwwroot/css/
 
 # runtime
-FROM ghcr.io/imagegenius/baseimage-alpine:3.20
+FROM ghcr.io/imagegenius/baseimage-ubuntu:noble
 
 # set version label
 ARG TESLACAMPLAYER_VERSION
@@ -55,25 +43,26 @@ LABEL maintainer="megabitus98"
 ENV ClipsRootPath=/media \
   CACHE_DATABASE_PATH=/config/clips.db \
   ASPNETCORE_URLS=http://+:5000 \
-  ENABLE_DELETE=true \
   TESLACAMPLAYER_VERSION=${TESLACAMPLAYER_VERSION} \
   BUILD_DATE=${BUILD_DATE}
 
 RUN \
   echo "**** install packages ****" && \
-  apk add --no-cache \
-    icu-libs \
+  apt-get update && \
+  apt-get install -y \
     ffmpeg && \
   echo "**** cleanup ****" && \
+  apt-get autoremove -y && \
+  apt-get clean && \
   rm -rf \
-    /tmp/*
+    /tmp/* \
+    /var/lib/apt/lists/* \
+    /var/tmp/*
 
 COPY --from=builder /out/ /
 
 # copy local files
 COPY root/ /
-
-RUN find /app -name "*.pdb" -delete || true
 
 # ports and volumes
 EXPOSE 5000
