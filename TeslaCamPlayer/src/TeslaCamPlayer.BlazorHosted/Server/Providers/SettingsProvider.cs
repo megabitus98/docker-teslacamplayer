@@ -39,6 +39,27 @@ public class SettingsProvider : ISettingsProvider
             };
         }
 
+        // Determine cache database path (fallback to prior CacheFilePath for backward compatibility)
+        if (string.IsNullOrWhiteSpace(settings.CacheDatabasePath))
+        {
+            if (!string.IsNullOrWhiteSpace(settings.CacheFilePath))
+            {
+                var fileName = settings.CacheFilePath;
+                var candidate = Path.ChangeExtension(fileName, ".db");
+                settings.CacheDatabasePath = candidate;
+            }
+            else
+            {
+                settings.CacheDatabasePath = Path.Combine(AppContext.BaseDirectory, "clips.db");
+            }
+        }
+
+        var cacheDbEnv = Environment.GetEnvironmentVariable("CACHE_DATABASE_PATH");
+        if (!string.IsNullOrWhiteSpace(cacheDbEnv))
+        {
+            settings.CacheDatabasePath = cacheDbEnv;
+        }
+
         // ExportRootPath default: under wwwroot/exports
         if (string.IsNullOrWhiteSpace(settings.ExportRootPath))
         {

@@ -52,7 +52,7 @@ LABEL maintainer="megabitus98"
 
 # environment settings
 ENV ClipsRootPath=/media \
-  CacheFilePath=/config/clips.json \
+  CACHE_DATABASE_PATH=/config/clips.db \
   ASPNETCORE_URLS=http://+:5000 \
   ENABLE_DELETE=true
 

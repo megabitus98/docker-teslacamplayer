@@ -25,61 +25,60 @@ public partial class ClipsService : IClipsService
     private readonly IFfProbeService _ffProbeService;
     private readonly SemaphoreSlim _ffprobeSemaphore;
     private readonly IRefreshProgressService _refreshProgressService;
+    private readonly IClipIndexRepository _clipIndexRepository;
 
     // State for background progressive refresh
     private readonly object _refreshGate = new();
     private Task _refreshTask;
 
-    public ClipsService(ISettingsProvider settingsProvider, IFfProbeService ffProbeService, IRefreshProgressService refreshProgressService)
+    public ClipsService(
+        ISettingsProvider settingsProvider,
+        IFfProbeService ffProbeService,
+        IRefreshProgressService refreshProgressService,
+        IClipIndexRepository clipIndexRepository)
     {
         _settingsProvider = settingsProvider;
         _ffProbeService = ffProbeService;
         _refreshProgressService = refreshProgressService;
+        _clipIndexRepository = clipIndexRepository;
         // limit the number of ffprobe instances to how many cores we have, otherwise... BOOM!
         int semaphoreCount = Environment.ProcessorCount;
         _ffprobeSemaphore = new SemaphoreSlim(semaphoreCount);
     }
 
-    private string CacheFilePath => _settingsProvider.Settings.CacheFilePath ?? Path.Combine(AppContext.BaseDirectory, "clips.json");
-
     private async Task<Clip[]> GetCachedAsync()
     {
-        if (!File.Exists(CacheFilePath))
-        {
-            return null;
-        }
-
-        Clip[] cached;
+        IReadOnlyList<VideoFile> stored;
         try
         {
-            var json = await File.ReadAllTextAsync(CacheFilePath);
-            cached = JsonConvert.DeserializeObject<Clip[]>(json);
+            stored = await _clipIndexRepository.LoadVideoFilesAsync();
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to read clip cache from {CacheFilePath}", CacheFilePath);
+            Log.Error(ex, "Failed to read clip cache from SQLite database.");
             return null;
         }
 
-        if (cached == null)
+        if (stored == null || stored.Count == 0)
         {
             return null;
         }
 
-        var sanitized = PruneMissingEventClips(cached, out var removedAny);
-        if (removedAny)
+        var cache = BuildClipCache(stored, out var prunedDirectories);
+
+        if (prunedDirectories.Length > 0)
         {
             try
             {
-                await PersistCacheAsync(sanitized);
+                await _clipIndexRepository.RemoveByDirectoriesAsync(prunedDirectories);
             }
-            catch (Exception persistEx)
+            catch (Exception pruneEx)
             {
-                Log.Error(persistEx, "Failed to update clip cache after pruning missing events.");
+                Log.Error(pruneEx, "Failed to prune missing clip directories from cache database.");
             }
         }
 
-        return sanitized;
+        return cache;
     }
 
     public async Task<Clip[]> GetClipsAsync(bool refreshCache = false)
@@ -135,6 +134,8 @@ public partial class ClipsService : IClipsService
                 minBatchSize,
                 settings.IndexingMaxMemoryUtilization);
 
+            await _clipIndexRepository.ResetAsync();
+
             _refreshProgressService.Start(totalCandidates);
 
             var aggregatedResults = new List<VideoFile>();
@@ -175,7 +176,7 @@ public partial class ClipsService : IClipsService
                     CancellationToken.None);
             }
 
-            await PublishPartialAsync(aggregatedResults.ToArray());
+            await UpdateCacheAsync(aggregatedResults);
 
             stopwatch.Stop();
 
@@ -244,7 +245,12 @@ public partial class ClipsService : IClipsService
 
         aggregateResults.AddRange(batchResults);
 
-        await PublishPartialAsync(aggregateResults.ToArray());
+        if (batchResults.Count > 0)
+        {
+            await _clipIndexRepository.UpsertVideoFilesAsync(batchResults);
+        }
+
+        await UpdateCacheAsync(aggregateResults);
 
         PerformGarbageCollection($"post-batch {batchNumber}");
         var snapshotAfter = CaptureMemorySnapshot();
@@ -411,55 +417,70 @@ public partial class ClipsService : IClipsService
         public double AvailableMemoryInMegabytes => BytesToMegabytes(AvailableMemoryBytes);
     }
 
-    private async Task PublishPartialAsync(VideoFile[] videoFiles)
+    private async Task UpdateCacheAsync(IReadOnlyCollection<VideoFile> videoFiles)
     {
         try
         {
-            var recentClips = GetRecentClips(videoFiles
-                .Where(vfi => vfi.ClipType == ClipType.Recent)
-                .ToList());
+            var cache = BuildClipCache(videoFiles, out var prunedDirectories);
+            _cache = cache;
 
-            var eventClips = videoFiles
-                .Select(vfi => vfi.EventFolderName)
-                .Where(e => !string.IsNullOrWhiteSpace(e))
-                .Distinct()
-                .AsParallel()
-                .Select(e => ParseClip(e, videoFiles))
-                .ToArray();
-
-            var combined = eventClips
-                .Concat(recentClips.AsParallel())
-                .OrderByDescending(c => c.StartDate)
-                .ToArray();
-
-            var sanitized = PruneMissingEventClips(combined, out _);
-            _cache = sanitized;
-            await PersistCacheAsync(sanitized);
+            if (prunedDirectories.Length > 0)
+            {
+                await _clipIndexRepository.RemoveByDirectoriesAsync(prunedDirectories);
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // ignore partial publish errors to avoid stopping the refresh loop
+            Log.Error(ex, "Failed to update clip cache during indexing.");
         }
     }
 
-    private async Task PersistCacheAsync(Clip[] clips)
+    private Clip[] BuildClipCache(IEnumerable<VideoFile> videoFiles, out string[] prunedDirectories)
     {
-        var cacheDirectory = Path.GetDirectoryName(CacheFilePath);
-        if (!string.IsNullOrWhiteSpace(cacheDirectory) && !Directory.Exists(cacheDirectory))
+        if (videoFiles == null)
         {
-            Directory.CreateDirectory(cacheDirectory);
+            prunedDirectories = Array.Empty<string>();
+            return Array.Empty<Clip>();
         }
 
-        await File.WriteAllTextAsync(CacheFilePath, JsonConvert.SerializeObject(clips));
+        var snapshot = videoFiles
+            .Where(v => v != null)
+            .ToArray();
+
+        if (snapshot.Length == 0)
+        {
+            prunedDirectories = Array.Empty<string>();
+            return Array.Empty<Clip>();
+        }
+
+        var recentClips = GetRecentClips(snapshot
+            .Where(v => v.ClipType == ClipType.Recent)
+            .ToList()).ToList();
+
+        var eventClips = snapshot
+            .Select(v => v.EventFolderName)
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .AsParallel()
+            .Select(e => ParseClip(e, snapshot))
+            .ToArray();
+
+        var combined = eventClips
+            .Concat(recentClips.AsParallel())
+            .OrderByDescending(c => c.StartDate)
+            .ToArray();
+
+        var sanitized = PruneMissingEventClips(combined, out prunedDirectories);
+        return sanitized;
     }
 
-    private Clip[] PruneMissingEventClips(Clip[] clips, out bool removedAny)
+    private Clip[] PruneMissingEventClips(Clip[] clips, out string[] removedDirectories)
     {
-        removedAny = false;
+        removedDirectories = Array.Empty<string>();
 
         if (clips == null)
         {
-            return null;
+            return Array.Empty<Clip>();
         }
 
         if (clips.Length == 0)
@@ -468,11 +489,12 @@ public partial class ClipsService : IClipsService
         }
 
         var filtered = new List<Clip>(clips.Length);
+        var missing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var clip in clips)
         {
             if (clip == null)
             {
-                removedAny = true;
                 continue;
             }
 
@@ -482,11 +504,31 @@ public partial class ClipsService : IClipsService
                 continue;
             }
 
-            removedAny = true;
-            Log.Information("Removed cached event at {DirectoryPath} because it no longer exists on disk.", clip.DirectoryPath);
+            var normalized = NormalizeDirectoryPath(clip.DirectoryPath);
+            if (missing.Add(normalized))
+            {
+                Log.Information("Removed cached event at {DirectoryPath} because it no longer exists on disk.", clip.DirectoryPath);
+            }
         }
 
-        return removedAny ? filtered.ToArray() : clips;
+        if (missing.Count == 0)
+        {
+            return clips;
+        }
+
+        removedDirectories = missing.ToArray();
+        return filtered.ToArray();
+    }
+
+    private static string NormalizeDirectoryPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        var normalized = path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        return normalized.TrimEnd(Path.DirectorySeparatorChar);
     }
 
     private static IEnumerable<Clip> GetRecentClips(List<VideoFile> recentVideoFiles)
