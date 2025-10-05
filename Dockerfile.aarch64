@@ -18,7 +18,7 @@ RUN if [ -n "${TESLACAMPLAYER_VERSION}" ]; then \
       sed -i'' -e "s/<AssemblyVersion>[0-9.*]\+<\/AssemblyVersion>/<AssemblyVersion>${TESLACAMPLAYER_VERSION}<\/AssemblyVersion>/g" TeslaCamPlayer.BlazorHosted.Server.csproj; \
     fi && \
     dotnet restore && \
-    dotnet publish -c Release -o /tmp/build --no-restore --self-contained true -r linux-arm64 /p:PublishTrimmed=true /p:DefineConstants=DOCKER
+    dotnet publish -c Release -o /tmp/build --no-restore --self-contained true -r linux-arm64 /p:PublishTrimmed=true /p:DefineConstants=DOCKER ${TESLACAMPLAYER_VERSION:+/p:AssemblyVersion=${TESLACAMPLAYER_VERSION}}
 
 # build client assets and assemble output
 WORKDIR /src/TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client
@@ -34,15 +34,17 @@ RUN npm install && \
 FROM ghcr.io/imagegenius/baseimage-ubuntu:arm64v8-noble
 
 # set version label
+ARG TESLACAMPLAYER_VERSION
 ARG BUILD_DATE
-ARG VERSION
-LABEL build_version="Version:- ${VERSION} Build-date:- ${BUILD_DATE}"
+LABEL build_version="Version:- ${TESLACAMPLAYER_VERSION} Build-date:- ${BUILD_DATE}"
 LABEL maintainer="megabitus98"
 
 # environment settings
 ENV ClipsRootPath=/media \
   CACHE_DATABASE_PATH=/config/clips.db \
-  ASPNETCORE_URLS=http://+:5000
+  ASPNETCORE_URLS=http://+:5000 \
+  TESLACAMPLAYER_VERSION=${TESLACAMPLAYER_VERSION} \
+  BUILD_DATE=${BUILD_DATE}
 
 RUN \
   echo "**** install packages ****" && \

@@ -27,7 +27,8 @@ RUN if [ -n "${TESLACAMPLAYER_VERSION}" ]; then \
       /p:IncludeNativeLibrariesForSelfExtract=false \
       /p:StripSymbols=true \
       /p:DebugType=None \
-      /p:DefineConstants=DOCKER && \
+      /p:DefineConstants=DOCKER \
+      ${TESLACAMPLAYER_VERSION:+/p:AssemblyVersion=${TESLACAMPLAYER_VERSION}} && \
     if [ -f /tmp/build/TeslaCamPlayer.BlazorHosted.Server ]; then \
       strip --strip-unneeded /tmp/build/TeslaCamPlayer.BlazorHosted.Server; \
     fi
@@ -45,16 +46,18 @@ RUN npm install --no-audit --progress=false && \
 FROM ghcr.io/imagegenius/baseimage-alpine:3.20
 
 # set version label
+ARG TESLACAMPLAYER_VERSION
 ARG BUILD_DATE
-ARG VERSION
-LABEL build_version="Version:- ${VERSION} Build-date:- ${BUILD_DATE}"
+LABEL build_version="Version:- ${TESLACAMPLAYER_VERSION} Build-date:- ${BUILD_DATE}"
 LABEL maintainer="megabitus98"
 
 # environment settings
 ENV ClipsRootPath=/media \
   CACHE_DATABASE_PATH=/config/clips.db \
   ASPNETCORE_URLS=http://+:5000 \
-  ENABLE_DELETE=true
+  ENABLE_DELETE=true \
+  TESLACAMPLAYER_VERSION=${TESLACAMPLAYER_VERSION} \
+  BUILD_DATE=${BUILD_DATE}
 
 RUN \
   echo "**** install packages ****" && \
