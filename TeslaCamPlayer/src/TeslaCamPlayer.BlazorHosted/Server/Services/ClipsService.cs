@@ -126,7 +126,9 @@ public partial class ClipsService : IClipsService
                 knownVideoFiles[video.FilePath] = video;
             }
 
-            var totalCandidates = EnumerateCandidatePaths(settings).Count();
+            // Snapshot candidate paths to avoid drift between initial count and processing
+            var candidatePaths = EnumerateCandidatePaths(settings).ToList();
+            var totalCandidates = candidatePaths.Count;
             Log.Information(
                 "Event indexing started with {CandidateCount} candidate video files. Target batch size {BatchSize}, minimum batch size {MinBatchSize}, memory threshold {MemoryThreshold:P2}.",
                 totalCandidates,
@@ -143,7 +145,7 @@ public partial class ClipsService : IClipsService
             var currentBatchSize = initialBatchSize;
             var batchNumber = 0;
 
-            foreach (var path in EnumerateCandidatePaths(settings))
+            foreach (var path in candidatePaths)
             {
                 pendingPaths.Add(path);
 

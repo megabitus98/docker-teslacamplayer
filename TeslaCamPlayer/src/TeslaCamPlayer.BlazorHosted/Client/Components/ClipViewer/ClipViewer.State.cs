@@ -109,19 +109,22 @@ public partial class ClipViewer
 
     private async Task ExecuteOnPlayers(Func<VideoPlayer, Task> action)
     {
-        try
+        foreach (var tile in _tiles)
         {
-            foreach (var tile in _tiles)
+            var player = tile.Player;
+            if (player == null || string.IsNullOrWhiteSpace(player.Src))
             {
-                if (tile.Player != null)
-                {
-                    await action(tile.Player);
-                }
+                continue;
             }
-        }
-        catch
-        {
-            // intentionally ignored – resilient playback loop
+
+            try
+            {
+                await action(player);
+            }
+            catch
+            {
+                // intentionally ignored – resilient playback loop
+            }
         }
     }
 

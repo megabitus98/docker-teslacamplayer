@@ -42,7 +42,9 @@ public class RefreshProgressService : IRefreshProgressService
         {
             if (_status.IsRefreshing)
             {
-                _status.Processed++;
+                // Clamp to Total defensively to avoid UI showing >100%
+                var next = _status.Processed + 1;
+                _status.Processed = next <= _status.Total ? next : _status.Total;
                 snapshot = CloneStatusUnsafe();
             }
         }
