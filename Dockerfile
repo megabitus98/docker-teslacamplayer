@@ -1,70 +1,77 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS builder
+# syntax=docker/dockerfile:1.7
 
-# set version label
+######## builder: .NET (Debian/glibc) ########
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS dotnet-builder
 ARG TESLACAMPLAYER_VERSION
-
-# install build dependencies
-RUN apk add --no-cache \
-    nodejs \
-    npm
-
-# copy local TeslaCamPlayer sources from this repo
+ARG TARGETARCH
 WORKDIR /src
-COPY TeslaCamPlayer/ /src/TeslaCamPlayer/
 
-# build server (amd64)
+# Restore with caching (global + HTTP cache)
+COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/*.csproj TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/
+COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/*.csproj TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    --mount=type=cache,target=/root/.local/share/NuGet/v3-cache \
+    dotnet restore TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server
+
+# Bring in full sources
+COPY TeslaCamPlayer/ TeslaCamPlayer/
 WORKDIR /src/TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server
+
+# Optional: bump AssemblyVersion if provided
 RUN if [ -n "${TESLACAMPLAYER_VERSION}" ]; then \
-      sed -i'' -e "s/<AssemblyVersion>[0-9.*]\+<\/AssemblyVersion>/<AssemblyVersion>${TESLACAMPLAYER_VERSION}<\/AssemblyVersion>/g" TeslaCamPlayer.BlazorHosted.Server.csproj; \
-    fi && \
-    dotnet restore && \
-    dotnet publish -c Release -o /tmp/build --no-restore --self-contained true -r linux-x64 /p:PublishTrimmed=true /p:DefineConstants=DOCKER ${TESLACAMPLAYER_VERSION:+/p:AssemblyVersion=${TESLACAMPLAYER_VERSION}}
+      sed -i'' -e "s#<AssemblyVersion>[0-9.*]\\+</AssemblyVersion>#<AssemblyVersion>${TESLACAMPLAYER_VERSION}</AssemblyVersion>#g" TeslaCamPlayer.BlazorHosted.Server.csproj; \
+    fi
 
-# build client assets and assemble output
+# Map Docker arch -> .NET RID arch token (glibc)
+ENV RID_PREFIX=linux
+RUN if [ "$TARGETARCH" = "amd64" ]; then export RID=${RID_PREFIX}-x64; else export RID=${RID_PREFIX}-${TARGETARCH}; fi && \
+    dotnet publish -c Release -o /tmp/publish \
+      -r ${RID} --self-contained true \
+      /p:EnableCompressionInSingleFile=true \
+      /p:DebugType=none \
+      /p:DefineConstants=DOCKER \
+      ${TESLACAMPLAYER_VERSION:+/p:AssemblyVersion=${TESLACAMPLAYER_VERSION}}
+
+######## builder: Node (Debian) ########
+FROM node:20-bullseye-slim AS client-build
 WORKDIR /src/TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client
-RUN npm install && \
-    npm install -g gulp && \
-    gulp default && \
-    rm -rf /tmp/build/lib && \
-    mkdir -p /out/app/teslacamplayer/wwwroot && \
-    cp -r /tmp/build/* /out/app/teslacamplayer/ && \
-    cp -r wwwroot/css/ /out/app/teslacamplayer/wwwroot/css/
 
-# runtime
+# Deterministic, CI-friendly install
+COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/package*.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+
+# Build client assets
+COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/ ./
+RUN npx gulp default
+RUN mkdir -p /client-static/css && cp -r wwwroot/css/ /client-static/css/
+
+######## runtime: keep linuxserver base (Ubuntu noble amd64) ########
 FROM ghcr.io/imagegenius/baseimage-ubuntu:noble
 
-# set version label
 ARG TESLACAMPLAYER_VERSION
 ARG BUILD_DATE
 LABEL build_version="Version:- ${TESLACAMPLAYER_VERSION} Build-date:- ${BUILD_DATE}"
 LABEL maintainer="megabitus98"
 
-# environment settings
 ENV ClipsRootPath=/media \
-  CACHE_DATABASE_PATH=/config/clips.db \
-  ASPNETCORE_URLS=http://+:5000 \
-  TESLACAMPLAYER_VERSION=${TESLACAMPLAYER_VERSION} \
-  BUILD_DATE=${BUILD_DATE}
+    CACHE_DATABASE_PATH=/config/clips.db \
+    ASPNETCORE_URLS=http://+:5000 \
+    TESLACAMPLAYER_VERSION=${TESLACAMPLAYER_VERSION} \
+    BUILD_DATE=${BUILD_DATE} \
+    DEBIAN_FRONTEND=noninteractive \
+    DOTNET_EnableDiagnostics=0
 
-RUN \
-  echo "**** install packages ****" && \
-  apt-get update && \
-  apt-get install -y \
-    ffmpeg && \
-  echo "**** cleanup ****" && \
-  apt-get autoremove -y && \
-  apt-get clean && \
-  rm -rf \
-    /tmp/* \
-    /var/lib/apt/lists/* \
-    /var/tmp/*
+# ffmpeg minimal + cleanup in one layer
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /out/ /
+# Copy published server + client CSS
+COPY --from=dotnet-builder /tmp/publish/ /app/teslacamplayer/
+COPY --from=client-build   /client-static/css/ /app/teslacamplayer/wwwroot/css/
 
-# copy local files
+# Existing s6 init files
 COPY root/ /
 
-# ports and volumes
 EXPOSE 5000
-
-VOLUME /config /media
+VOLUME ["/config", "/media"]
