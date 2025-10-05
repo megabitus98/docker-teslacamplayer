@@ -43,7 +43,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 # Build client assets
 COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/ ./
 RUN npx gulp default
-RUN mkdir -p /client-static/css && cp -r wwwroot/css/ /client-static/css/
+# Copy only the contents of wwwroot/css into /client-static/css (avoid nested css/css)
+RUN mkdir -p /client-static/css && cp -r wwwroot/css/. /client-static/css/
 
 ######## runtime: keep linuxserver base (Ubuntu noble amd64) ########
 FROM ghcr.io/imagegenius/baseimage-ubuntu:noble

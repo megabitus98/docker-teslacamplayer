@@ -36,6 +36,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private bool _setDatePickerInitialDate;
     private ElementReference _eventsList;
     private System.Timers.Timer _scrollDebounceTimer;
+    private System.Timers.Timer _refreshUiTimer;
     private DateTime _ignoreDatePicked;
     private Clip _activeClip;
     private ClipViewer _clipViewer;
@@ -61,11 +62,18 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private int _lastRefreshProcessed = -1;
     private DateTime _lastClipsReloadUtc = DateTime.MinValue;
     private bool _seenActiveRefresh;
+    private bool _refreshUiRenderPending;
 
     protected override async Task OnInitializedAsync()
     {
         _scrollDebounceTimer = new(100);
         _scrollDebounceTimer.Elapsed += ScrollDebounceTimerTick;
+
+        // Throttle UI renders for frequent refresh updates
+        _refreshUiTimer = new(200);
+        _refreshUiTimer.Elapsed += RefreshUiTimerTick;
+        _refreshUiTimer.AutoReset = true;
+        _refreshUiTimer.Enabled = false;
 
         _refreshStatusSubscription ??= StatusHubClient.RegisterRefreshHandler(HandleRefreshStatusAsync);
         _exportStatusSubscription ??= StatusHubClient.RegisterExportHandler(HandleExportStatusAsync);
@@ -152,18 +160,48 @@ public partial class Index : ComponentBase, IAsyncDisposable
         }
 
         _refreshStatus = status;
-        await InvokeAsync(StateHasChanged);
+        _refreshUiRenderPending = true;
+
+        if (status.IsRefreshing)
+        {
+            // Ensure periodic UI updates while indexing
+            if (_refreshUiTimer != null && !_refreshUiTimer.Enabled)
+            {
+                _refreshUiTimer.Enabled = true;
+            }
+        }
 
         if (shouldReloadClips)
         {
-            await ReloadClipsAsync();
+            _ = ReloadClipsAsync();
         }
 
         if (!status.IsRefreshing && _seenActiveRefresh && (status.Total > 0 || status.Processed > 0))
         {
             _seenActiveRefresh = false;
-            await ReloadClipsAsync();
+            _ = ReloadClipsAsync();
         }
+
+        if (!status.IsRefreshing)
+        {
+            // Stop throttling and force a final render to show the last values immediately
+            if (_refreshUiTimer != null)
+            {
+                _refreshUiTimer.Enabled = false;
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async void RefreshUiTimerTick(object _, ElapsedEventArgs __)
+    {
+        if (!_refreshUiRenderPending)
+        {
+            return;
+        }
+
+        _refreshUiRenderPending = false;
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task ReloadClipsAsync()
@@ -604,6 +642,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
         try
         {
             _scrollDebounceTimer?.Dispose();
+            _refreshUiTimer?.Dispose();
         }
         catch
         {
