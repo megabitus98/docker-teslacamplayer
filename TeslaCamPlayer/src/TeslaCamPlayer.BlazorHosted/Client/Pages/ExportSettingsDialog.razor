@@ -2,27 +2,28 @@
 
 <MudDialog Class="pa-2" MaxWidth="MaxWidth.Medium" FullWidth="true">
     <DialogContent>
-        <MudText Typo="Typo.h6" Class="mb-2">Export Settings</MudText>
-        <div class="d-flex flex-column" style="gap: 12px;">
-            <MudSelect T="string" Label="Format" @bind-Value="Format">
-                <MudSelectItem Value='@("mp4")'>MP4 (H.264)</MudSelectItem>
-                <MudSelectItem Value='@("mov")'>MOV (H.264)</MudSelectItem>
-            </MudSelect>
-            <MudSelect T="string" Label="Resolution" @bind-Value="Resolution">
-                <MudSelectItem Value='@("original")'>Original (auto)</MudSelectItem>
-                <MudSelectItem Value='@("1280x720")'>1280 x 720</MudSelectItem>
-                <MudSelectItem Value='@("1920x1080")'>1920 x 1080</MudSelectItem>
-                <MudSelectItem Value='@("2560x1440")'>2560 x 1440</MudSelectItem>
-                <MudSelectItem Value='@("3840x2160")'>3840 x 2160</MudSelectItem>
-            </MudSelect>
-            <MudSelect T="string" Label="Quality" @bind-Value="Quality">
-                <MudSelectItem Value='@("low")'>Low</MudSelectItem>
-                <MudSelectItem Value='@("medium")'>Medium</MudSelectItem>
-                <MudSelectItem Value='@("high")'>High</MudSelectItem>
-            </MudSelect>
-            <MudCheckBox Class="wrap-label" @bind-Checked="IncludeTimestamp" Label="Include timestamp overlay" />
-            <MudCheckBox Class="wrap-label" @bind-Checked="IncludeLabels" Label="Include camera labels" />
-            <MudCheckBox Class="wrap-label" @bind-Checked="IncludeLocation" Label="Include location overlay (city/GPS)" />
+        <div class="mt-2">
+            <div class="d-flex flex-column" style="gap: 12px;">
+                <MudSelect T="string" Label="Format" @bind-Value="Format">
+                    <MudSelectItem Value='@("mp4")'>MP4 (H.264)</MudSelectItem>
+                    <MudSelectItem Value='@("mov")'>MOV (H.264)</MudSelectItem>
+                </MudSelect>
+                <MudSelect T="string" Label="Resolution" @bind-Value="Resolution">
+                    <MudSelectItem Value='@("original")'>Original (auto)</MudSelectItem>
+                    <MudSelectItem Value='@("1280x720")'>1280 x 720</MudSelectItem>
+                    <MudSelectItem Value='@("1920x1080")'>1920 x 1080</MudSelectItem>
+                    <MudSelectItem Value='@("2560x1440")'>2560 x 1440</MudSelectItem>
+                    <MudSelectItem Value='@("3840x2160")'>3840 x 2160</MudSelectItem>
+                </MudSelect>
+                <MudSelect T="string" Label="Quality" @bind-Value="Quality">
+                    <MudSelectItem Value='@("low")'>Low</MudSelectItem>
+                    <MudSelectItem Value='@("medium")'>Medium</MudSelectItem>
+                    <MudSelectItem Value='@("high")'>High</MudSelectItem>
+                </MudSelect>
+                <MudCheckBox Class="wrap-label" @bind-Checked="IncludeTimestamp" Label="Include timestamp overlay" />
+                <MudCheckBox Class="wrap-label" @bind-Checked="IncludeLabels" Label="Include camera labels" />
+                <MudCheckBox Class="wrap-label" @bind-Checked="IncludeLocation" Label="Include location overlay (city/GPS)" />
+            </div>
         </div>
     </DialogContent>
     <DialogActions>

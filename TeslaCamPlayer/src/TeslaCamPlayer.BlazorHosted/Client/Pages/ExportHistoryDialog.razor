@@ -8,43 +8,44 @@
 
 <MudDialog Class="pa-2" MaxWidth="MaxWidth.Large" FullWidth="true">
     <DialogContent>
-        <MudText Typo="Typo.h6" Class="mb-2">Export History</MudText>
-        <MudTable Items="_items" Dense="true" Hover="true">
-            <HeaderContent>
-                <MudTh>File</MudTh>
-                <MudTh>Created (UTC)</MudTh>
-                <MudTh>Size</MudTh>
-                <MudTh>Status</MudTh>
-                <MudTh>Progress</MudTh>
-                <MudTh>Action</MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd DataLabel="File">@context.FileName</MudTd>
-                <MudTd DataLabel="Created">@context.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
-                <MudTd DataLabel="Size">@FormatSize(context.SizeBytes)</MudTd>
-                <MudTd DataLabel="Status">@context.Status?.State.ToString()</MudTd>
-                <MudTd DataLabel="Progress">
-                    @if (context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending)
-                    {
-                        <MudProgressLinear Value="@(context.Status?.Percent ?? 0)" />
-                    }
-                </MudTd>
-                <MudTd DataLabel="Action">
-                    @if (context.Status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(context.Url))
-                    {
-                        <MudButton Size="Size.Small" Color="Color.Success" Href="@context.Url" Target="_blank">Download</MudButton>
-                    }
-                    @if ((context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending) && !_canceling.Contains(context.JobId))
-                    {
-                        <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" OnClick="@(() => Cancel(context.JobId))">Cancel</MudButton>
-                    }
-                    @if (_canceling.Contains(context.JobId))
-                    {
-                        <MudButton Size="Size.Small" Disabled="true" Variant="Variant.Outlined">Cancelling…</MudButton>
-                    }
-                </MudTd>
-            </RowTemplate>
-        </MudTable>
+        <div class="mt-2">
+            <MudTable Items="_items" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>File</MudTh>
+                    <MudTh>Created (UTC)</MudTh>
+                    <MudTh>Size</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Progress</MudTh>
+                    <MudTh>Action</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="File">@context.FileName</MudTd>
+                    <MudTd DataLabel="Created">@context.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                    <MudTd DataLabel="Size">@FormatSize(context.SizeBytes)</MudTd>
+                    <MudTd DataLabel="Status">@context.Status?.State.ToString()</MudTd>
+                    <MudTd DataLabel="Progress">
+                        @if (context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending)
+                        {
+                            <MudProgressLinear Value="@(context.Status?.Percent ?? 0)" />
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Action">
+                        @if (context.Status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(context.Url))
+                        {
+                            <MudButton Size="Size.Small" Color="Color.Success" Href="@context.Url" Target="_blank">Download</MudButton>
+                        }
+                        @if ((context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending) && !_canceling.Contains(context.JobId))
+                        {
+                            <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" OnClick="@(() => Cancel(context.JobId))">Cancel</MudButton>
+                        }
+                        @if (_canceling.Contains(context.JobId))
+                        {
+                            <MudButton Size="Size.Small" Disabled="true" Variant="Variant.Outlined">Cancelling…</MudButton>
+                        }
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </div>
     </DialogContent>
     <DialogActions>
         <MudButton Variant="Variant.Text" OnClick="@Close">Close</MudButton>

@@ -7,34 +7,30 @@
 
 <MudDialog Class="pa-2" MaxWidth="MaxWidth.Small" FullWidth="true">
     <DialogContent>
-        <MudText Typo="Typo.h6" Class="mb-2">Exporting Video</MudText>
-
-        @if (_status == null || _status.State == ExportState.Pending)
-        {
-            <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
-            <MudText Typo="Typo.caption" Class="mt-1">Preparing export…</MudText>
-        }
-        else if (_status.State == ExportState.Running)
-        {
-            <MudProgressLinear Color="Color.Primary" Value="@_status.Percent" />
-            <MudText Typo="Typo.caption" Class="mt-1">@(_status.Percent.ToString("0.0"))%</MudText>
-        }
-        else if (_status.State == ExportState.Completed)
-        {
-            <MudAlert Severity="Severity.Success" Class="mb-2">Export completed successfully.</MudAlert>
-            @if (!string.IsNullOrWhiteSpace(_status.OutputUrl))
+        <div class="mt-2">
+            @if (_status == null || _status.State == ExportState.Pending)
             {
-                <MudButton Color="Color.Success" Href="@_status.OutputUrl" Target="_blank">Download Export</MudButton>
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+                <MudText Typo="Typo.caption" Class="mt-1">Preparing export…</MudText>
             }
-        }
-        else if (_status.State == ExportState.Failed)
-        {
-            <MudAlert Severity="Severity.Error">@(_status.ErrorMessage ?? "Export failed.")</MudAlert>
-        }
-        else if (_status.State == ExportState.Canceled)
-        {
-            <MudAlert Severity="Severity.Warning">Export was canceled.</MudAlert>
-        }
+            else if (_status.State == ExportState.Running)
+            {
+                <MudProgressLinear Color="Color.Primary" Value="@_status.Percent" />
+                <MudText Typo="Typo.caption" Class="mt-1">@(_status.Percent.ToString("0.0"))%</MudText>
+            }
+            else if (_status.State == ExportState.Completed)
+            {
+                <MudAlert Severity="Severity.Success" Class="mb-2">Export completed successfully.</MudAlert>
+            }
+            else if (_status.State == ExportState.Failed)
+            {
+                <MudAlert Severity="Severity.Error">@(_status.ErrorMessage ?? "Export failed.")</MudAlert>
+            }
+            else if (_status.State == ExportState.Canceled)
+            {
+                <MudAlert Severity="Severity.Warning">Export was canceled.</MudAlert>
+            }
+        </div>
     </DialogContent>
     <DialogActions>
         @if (_status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(_status?.OutputUrl))

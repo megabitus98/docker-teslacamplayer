@@ -6,13 +6,19 @@
     <MudAppBar Elevation="1">
         <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@ToggleDrawer" />
         <MudSpacer />
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@ToggleExportMode">
-            <MudIcon Icon="@Icons.Material.Filled.FileUpload" Class="mr-2" /> Export Video
-        </MudButton>
-        @if (_isExportMode)
+        @if (!_isExportMode)
         {
-            <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Class="ml-2" OnClick="@OpenExportDialog">
-                <MudIcon Icon="@Icons.Material.Filled.Settings" Class="mr-2" /> Video Export
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@ToggleExportMode">
+                <MudIcon Icon="@Icons.Material.Filled.FileUpload" Class="mr-2" /> Export Video
+            </MudButton>
+        }
+        else
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="@OpenExportDialog">
+                <MudIcon Icon="@Icons.Material.Filled.FileUpload" Class="mr-2" /> Export Video
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="ml-2" OnClick="@ToggleExportMode">
+                <MudIcon Icon="@Icons.Material.Filled.Close" Class="mr-2" /> Exit Export Mode
             </MudButton>
         }
         <MudButton Variant="Variant.Text" Color="Color.Inherit" Class="ml-2" OnClick="@OpenExportHistoryDialog">History</MudButton>
