@@ -1,0 +1,26 @@
+---
+services:
+  teslacamplayer:
+    # image: megabitus/teslacamplayer:1.0.7
+    build:
+      context: .
+      dockerfile: Dockerfile.aarch64
+    container_name: teslacamplayer
+    environment:
+      - TZ=Europe/Bucharest
+      - ENABLE_DELETE=false # Enable delete functionality in the web UI
+      - EXPORT_ROOT_PATH=/export
+      - EXPORT_RETENTION_HOURS=48
+    volumes:
+      - appdata:/config
+      - /Users/megabitus/Movies/TeslaCam:/media
+      - exportdata:/export
+    ports:
+      - 5500:5000
+    restart: unless-stopped
+
+volumes:
+  appdata:
+    driver: local
+  exportdata:
+    driver: local
