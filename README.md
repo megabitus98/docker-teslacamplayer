@@ -22,6 +22,36 @@ This image supports the following architectures:
 | arm64 | ✅ | \<version tag\>-arm64 |
 | armhf | ❌ | |
 
+## Technologies Used
+
+This project leverages a modern technology stack to provide an efficient and scalable solution for viewing Tesla cam videos:
+
+### Backend Technologies
+- **ASP.NET Core 8**: The foundation of the server-side application, providing a robust and high-performance framework for building web applications
+- **SignalR**: Enables real-time communication between the server and clients for live updates and notifications
+- **SQLite**: Lightweight database for storing clip metadata and application settings
+- **FFmpeg**: Essential for video processing and analysis, extracting metadata and handling video formats
+- **Elastic APM**: Provides application performance monitoring and observability
+
+### Frontend Technologies
+- **Blazor WebAssembly**: Enables building interactive web UIs using C# instead of JavaScript
+- **MudBlazor**: Material Design component library for creating responsive and visually appealing interfaces
+- **SASS/SCSS**: CSS extension for advanced styling capabilities with variables, nesting, and mixins
+- **Gulp**: Build automation tool for processing and optimizing frontend assets
+
+### Containerization & Deployment
+- **Docker**: Containerization platform enabling consistent deployment across different environments
+- **s6-overlay**: Process supervision and management for containerized applications
+- **Ubuntu**: Base Linux distribution for the container runtime
+- **Multi-architecture Support**: Images built for x86-64, ARM64, and ARMHF architectures
+
+### Key Features
+- Real-time video playback with timeline navigation
+- Camera and event filtering capabilities
+- Export functionality with retention policies
+- Responsive design for various screen sizes
+- Secure authentication and authorization mechanisms
+- Performance monitoring and observability
 ## Application Setup
 
 The WebUI can be found at `http://your-ip:5000`, this app is a modified fork of [Rene-Sackers/TeslaCamPlayer](https://github.com/Rene-Sackers/TeslaCamPlayer) with an updated UI, delete button and some other tweaks.

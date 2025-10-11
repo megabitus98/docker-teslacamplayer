@@ -4,3 +4,8 @@
 .gitattributes
 READMETEMPLATE.md
 README.md
+# never send node_modules to Docker
+**/node_modules
+**/bin
+**/obj
+**/.DS_Store

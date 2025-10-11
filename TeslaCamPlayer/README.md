@@ -64,9 +64,18 @@ docker run \
 
 ### Environment variables
 
-| Variable      | Example   | Description                                                                                                                                          |
-| ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variable | Example | Description |
+| --- | --- | --- |
 | ClipsRootPath | /TeslaCam | The path to the root of the clips mount in the container. This is set by default, you do not need to change it if you mount the volume to this path. |
+| ElasticApm__Enabled | true | Toggle the backend Elastic APM agent. Set to `false` to disable all telemetry features quickly. |
+| ElasticApm__ServerUrls<br/>ELASTIC_APM_SERVER_URL | https://apm.example.com | Comma-separated Elastic APM intake URLs that receive traces, metrics, and errors. |
+| ElasticApm__SecretToken<br/>ELASTIC_APM_SECRET_TOKEN | secret-token | Optional shared secret/token when Elastic APM intake requires authentication. |
+| ElasticApm__Environment<br/>ELASTIC_APM_ENVIRONMENT | production | Logical environment name applied to traces, metrics, and logs. |
+| ElasticApm__MetricsPublishIntervalSeconds | 60 | Interval (seconds) between server-side custom metric snapshots for clip cache health. |
+| ElasticApm__Rum__IsEnabled | true | Enables the browser Real User Monitoring agent and configuration endpoint. |
+| ElasticApm__Rum__ServerUrl | https://apm.example.com | Overrides the RUM intake URL (falls back to `ServerUrls` when empty). |
+| ElasticApm__Rum__ServiceName | teslacamplayer-web | Name reported by the browser agent. Use separate names per environment if desired. |
+| ElasticApm__Rum__DistributedTracingOrigins__0 | https://api.example.com | Allows the browser agent to propagate trace context to additional origins (repeat with `__1`, `__2`, ... for more). |
 
 ### Volumes
 
@@ -79,6 +88,13 @@ docker run \
 | Port | Description                 |
 | ---- | --------------------------- |
 | 80   | The HTTP web interface port |
+
+### Elastic observability
+
+-   **Backend** – The server project now ships with the Elastic APM .NET agent (`Elastic.Apm.NetCoreAll`). Configure it through `appsettings.json` (`ElasticApm` section) or environment variables (`ElasticApm__*` or the standard `ELASTIC_APM_*` keys) to capture traces, errors, and clip-indexing spans. Structured Serilog output is enriched with `TraceId` and `TransactionId` so logs correlate with APM data automatically.
+-   **Custom metrics** – A background publisher reports clip-cache health (clip count, events, refresh progress, latest timestamp) to Elastic APM every `ElasticApm__MetricsPublishIntervalSeconds` seconds and logs the same payload for dashboards.
+-   **Frontend** – A browser RUM bootstrapper (`wwwroot/js/apm-init.js`) fetches `/api/observability/apm-rum-config` to initialise `@elastic/apm-rum`, enabling real-time user performance tracking, JS error capture, and distributed tracing for `HttpClient`/SignalR traffic. UI transitions emit custom spans so animation performance can be trended.
+-   Disable RUM by setting `ElasticApm__Rum__IsEnabled=false` (the script short-circuits if the config endpoint returns `204 No Content`).
 
 # Legal
 
