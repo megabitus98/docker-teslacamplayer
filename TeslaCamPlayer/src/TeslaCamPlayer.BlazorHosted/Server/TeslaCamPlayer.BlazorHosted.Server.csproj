@@ -37,6 +37,7 @@
         <None Remove="lib\ffprobe.exe" />
         <Content Include="lib\ffprobe.exe">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         </Content>
     </ItemGroup>
 

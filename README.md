@@ -56,6 +56,21 @@ This project leverages a modern technology stack to provide an efficient and sca
 
 The WebUI can be found at `http://your-ip:5000`, this app is a modified fork of [Rene-Sackers/TeslaCamPlayer](https://github.com/Rene-Sackers/TeslaCamPlayer) with an updated UI, delete button and some other tweaks.
 
+## Windows (Native Executable)
+
+Prefer to run the player directly on Windows? The repository now ships with a publish profile that produces a self-contained `TeslaCamPlayer.BlazorHosted.Server.exe` without needing Docker or a separate .NET runtime.
+
+1. Install the [.NET 8 SDK](https://dotnet.microsoft.com/download).
+2. From the repo root run:
+   ```bash
+   dotnet publish TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/TeslaCamPlayer.BlazorHosted.Server.csproj -c Release -p:PublishProfile=win-x64
+   ```
+3. Open the publish output at `TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/bin/Release/net8.0/win-x64/publish`.
+4. Update the generated `appsettings.json` (or provide environment variables) so `ClipsRootPath` points to your local TeslaCam folder, e.g. `D:\\TeslaCam`.
+5. Keep the folder contents together (the `lib\ffprobe.exe` helper ships alongside the executable), then launch `TeslaCamPlayer.BlazorHosted.Server.exe` and browse to `http://localhost:5000`.
+
+You can zip this folder and move it to another Windows system—everything required to run the app is included in the publish output.
+
 ## Usage
 
 Example snippets to start creating a container:
