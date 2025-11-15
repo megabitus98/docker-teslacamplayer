@@ -58,6 +58,18 @@
                                OnClick="@ToggleGridMode"
                                Class="grid-mode-toggle" />
             </MudTooltip>
+            <MudBadge Content="@(_playbackSpeed != 1.0 ? $"{_playbackSpeed:0.##}x" : null)"
+                      Visible="@(_playbackSpeed != 1.0)"
+                      Color="Color.Secondary"
+                      Overlap="true"
+                      Class="playback-speed-badge">
+                <MudMenu Icon="@Icons.Material.Filled.Speed" Size="Size.Medium" AnchorOrigin="Origin.TopCenter" TransformOrigin="Origin.BottomCenter">
+                    <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(0.25))">0.25x</MudMenuItem>
+                    <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(0.5))">0.5x</MudMenuItem>
+                    <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(0.75))">0.75x</MudMenuItem>
+                    <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(1.0))">1.0x (Normal)</MudMenuItem>
+                </MudMenu>
+            </MudBadge>
         </div>
         @if (IsExportMode)
         {

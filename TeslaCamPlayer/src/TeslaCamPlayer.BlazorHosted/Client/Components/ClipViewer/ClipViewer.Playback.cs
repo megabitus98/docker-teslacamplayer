@@ -6,6 +6,14 @@ namespace TeslaCamPlayer.BlazorHosted.Client.Components;
 
 public partial class ClipViewer
 {
+    private double _playbackSpeed = 1.0;
+
+    private async Task SetPlaybackSpeedAsync(double speed)
+    {
+        _playbackSpeed = speed;
+        await ExecuteOnPlayers(async player => await player.SetPlaybackRateAsync(speed));
+    }
+
     private Task TogglePlayingAsync(bool? play = null)
     {
         play ??= !_isPlaying;
