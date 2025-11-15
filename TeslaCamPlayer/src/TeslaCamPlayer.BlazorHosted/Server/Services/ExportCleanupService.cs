@@ -12,12 +12,23 @@ public class ExportCleanupService : BackgroundService
 {
     private readonly string _exportDir;
     private readonly TimeSpan _interval = TimeSpan.FromHours(1);
-    private readonly Func<TimeSpan> _keepForProvider;
+    private readonly Func<int> _retentionHoursProvider;
 
     public ExportCleanupService(ISettingsProvider settingsProvider)
     {
         _exportDir = settingsProvider.Settings.ExportRootPath;
-        _keepForProvider = () => TimeSpan.FromHours(Math.Max(1, settingsProvider.Settings.ExportRetentionHours));
+        _retentionHoursProvider = () => settingsProvider.Settings.ExportRetentionHours;
+
+        var retentionHours = _retentionHoursProvider();
+        if (retentionHours <= 0)
+        {
+            Log.Information("Export cleanup disabled; ExportRetentionHours is {Hours}.", retentionHours);
+        }
+        else
+        {
+            Log.Information("Export cleanup retention set to {Hours} hour(s).", retentionHours);
+        }
+
         try { Directory.CreateDirectory(_exportDir); } catch { }
     }
 
@@ -41,14 +52,17 @@ public class ExportCleanupService : BackgroundService
     private void CleanupOnce()
     {
         if (!Directory.Exists(_exportDir)) return;
+        var retentionHours = _retentionHoursProvider();
+        if (retentionHours <= 0) return;
+
         var now = DateTime.UtcNow;
+        var keepFor = TimeSpan.FromHours(Math.Max(1, retentionHours));
         foreach (var file in Directory.EnumerateFiles(_exportDir))
         {
             try
             {
                 var info = new FileInfo(file);
                 var age = now - info.CreationTimeUtc;
-                var keepFor = _keepForProvider();
                 if (age > keepFor)
                 {
                     info.Delete();

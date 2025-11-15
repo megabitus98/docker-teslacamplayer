@@ -10,7 +10,7 @@ services:
       - TZ=Europe/Bucharest
       - ENABLE_DELETE=false # Enable delete functionality in the web UI
       - EXPORT_ROOT_PATH=/export
-      - EXPORT_RETENTION_HOURS=48
+      - EXPORT_RETENTION_HOURS=0
       - ELASTIC_APM_SERVER_URL=http://apm-server:8200
       # - ELASTIC_APM_SECRET_TOKEN=your-secret
       - ELASTIC_APM_SERVICE_NAME=teslacamplayer

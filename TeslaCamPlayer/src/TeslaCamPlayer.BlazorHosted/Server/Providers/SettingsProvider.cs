@@ -74,9 +74,9 @@ public class SettingsProvider : ISettingsProvider
         }
 
         var exportRetentionEnv = Environment.GetEnvironmentVariable("EXPORT_RETENTION_HOURS");
-        if (!string.IsNullOrWhiteSpace(exportRetentionEnv) && int.TryParse(exportRetentionEnv, out var hrs) && hrs > 0)
+        if (!string.IsNullOrWhiteSpace(exportRetentionEnv) && int.TryParse(exportRetentionEnv, out var hrs))
         {
-            settings.ExportRetentionHours = hrs;
+            settings.ExportRetentionHours = Math.Max(0, hrs);
         }
 
         // Indexing batch size
