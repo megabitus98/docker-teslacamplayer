@@ -329,7 +329,7 @@ public class ExportService : IExportService
                     {
                         var evt = clip.Event;
                         if (evt == null) return null;
-                        var city = (evt.City ?? string.Empty).Trim();
+                        var streetAndCity = evt.GetStreetAndCity();
                         var latStr = (evt.EstLat ?? string.Empty).Trim();
                         var lonStr = (evt.EstLon ?? string.Empty).Trim();
                         string coords = null;
@@ -341,8 +341,8 @@ public class ExportService : IExportService
                             else
                                 coords = $"{latStr}, {lonStr}";
                         }
-                        if (!string.IsNullOrWhiteSpace(city) && !string.IsNullOrWhiteSpace(coords)) return $"{city} ({coords})";
-                        if (!string.IsNullOrWhiteSpace(city)) return city;
+                        if (!string.IsNullOrWhiteSpace(streetAndCity) && !string.IsNullOrWhiteSpace(coords)) return $"{streetAndCity} ({coords})";
+                        if (!string.IsNullOrWhiteSpace(streetAndCity)) return streetAndCity;
                         if (!string.IsNullOrWhiteSpace(coords)) return coords;
                         return null;
                     }

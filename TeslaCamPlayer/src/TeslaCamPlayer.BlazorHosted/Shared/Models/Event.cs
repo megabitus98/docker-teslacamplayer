@@ -20,6 +20,8 @@ public class Event
     public DateTime Timestamp;
     [JsonProperty("city")]
     public string City;
+    [JsonProperty("street")]
+    public string Street;
     [JsonProperty("est_lat")]
     public string EstLat;
     [JsonProperty("est_lon")]

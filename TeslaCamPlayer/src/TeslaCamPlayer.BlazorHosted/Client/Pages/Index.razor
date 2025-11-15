@@ -112,7 +112,7 @@
                                     @((context.Event?.Timestamp ?? context.StartDate).ToString("dd MMM yy h:mm tt"))
                                 </div>
                                 <div class="location">
-                                    @context.Event?.City
+                                    @context.Event?.GetStreetAndCity()
                                 </div>
                             </div>
                         </div>
