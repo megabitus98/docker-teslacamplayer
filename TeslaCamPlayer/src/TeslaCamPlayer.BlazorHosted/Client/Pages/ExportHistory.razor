@@ -7,6 +7,7 @@
     <MudTable Items="_items" Dense="true" Hover="true">
         <HeaderContent>
             <MudTh>File</MudTh>
+            <MudTh>Location</MudTh>
             <MudTh>Created (UTC)</MudTh>
             <MudTh>Size</MudTh>
             <MudTh>Status</MudTh>
@@ -15,6 +16,7 @@
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="File">@context.FileName</MudTd>
+            <MudTd DataLabel="Location">@(!string.IsNullOrWhiteSpace(context.Location) ? context.Location : "-")</MudTd>
             <MudTd DataLabel="Created">@context.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
             <MudTd DataLabel="Size">@FormatSize(context.SizeBytes)</MudTd>
             <MudTd DataLabel="Status">@context.Status?.State.ToString()</MudTd>
@@ -47,6 +49,7 @@
         public DateTime CreatedUtc { get; set; }
         public string JobId { get; set; }
         public ExportStatus Status { get; set; }
+        public string Location { get; set; }
     }
 
     private List<ExportItemVm> _items = new();

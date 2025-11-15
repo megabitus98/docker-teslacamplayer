@@ -157,6 +157,8 @@ public class ExportService : IExportService
             if (clip == null)
                 throw new InvalidOperationException("Clip not found.");
 
+            var locationDescription = clip.Event?.GetLocationDescription();
+
             // Ensure selection is within clip bounds
             var start = request.StartTimeUtc;
             var end = request.EndTimeUtc;
@@ -323,33 +325,7 @@ public class ExportService : IExportService
 
             if (request.IncludeLocationOverlay)
             {
-                string BuildLocationText()
-                {
-                    try
-                    {
-                        var evt = clip.Event;
-                        if (evt == null) return null;
-                        var streetAndCity = evt.GetStreetAndCity();
-                        var latStr = (evt.EstLat ?? string.Empty).Trim();
-                        var lonStr = (evt.EstLon ?? string.Empty).Trim();
-                        string coords = null;
-                        if (!string.IsNullOrWhiteSpace(latStr) && !string.IsNullOrWhiteSpace(lonStr))
-                        {
-                            if (double.TryParse(latStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var lat) &&
-                                double.TryParse(lonStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var lon))
-                                coords = $"{lat:0.#####}, {lon:0.#####}";
-                            else
-                                coords = $"{latStr}, {lonStr}";
-                        }
-                        if (!string.IsNullOrWhiteSpace(streetAndCity) && !string.IsNullOrWhiteSpace(coords)) return $"{streetAndCity} ({coords})";
-                        if (!string.IsNullOrWhiteSpace(streetAndCity)) return streetAndCity;
-                        if (!string.IsNullOrWhiteSpace(coords)) return coords;
-                        return null;
-                    }
-                    catch { return null; }
-                }
-
-                var locationText = BuildLocationText();
+                var locationText = locationDescription;
                 if (!string.IsNullOrWhiteSpace(locationText))
                 {
                     var geo = "[geo]";
@@ -393,7 +369,15 @@ public class ExportService : IExportService
                 var eventTime = clip.Event?.Timestamp ?? request.StartTimeUtc;
                 var utc = eventTime.ToUniversalTime().ToString("o");
                 argv.Add("-metadata"); argv.Add($"title=TeslaCamPlayer Export");
-                argv.Add("-metadata"); argv.Add($"comment=EventTimeUTC={utc}");
+
+                // Build comment with EventTimeUTC and Location
+                var commentParts = new List<string> { $"EventTimeUTC={utc}" };
+                if (!string.IsNullOrWhiteSpace(locationDescription))
+                {
+                    commentParts.Add($"Location={locationDescription}");
+                }
+                argv.Add("-metadata"); argv.Add($"comment={string.Join("; ", commentParts)}");
+
                 argv.Add("-metadata"); argv.Add($"creation_time={utc}");
             }
             catch { }

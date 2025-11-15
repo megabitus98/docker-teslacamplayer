@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Serilog;
+using System.Diagnostics;
 using System.Web;
+using TeslaCamPlayer.BlazorHosted.Server.Providers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
+using TeslaCamPlayer.BlazorHosted.Server.Services;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
-using TeslaCamPlayer.BlazorHosted.Server.Providers;
 
 namespace TeslaCamPlayer.BlazorHosted.Server.Controllers;
 
@@ -93,6 +95,63 @@ public class ApiController : ControllerBase
         return PhysicalFile(path, contentType, enableRangeProcessing);
     }
 
+    private static string TryReadLocationMetadata(string path)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("ffprobe")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            psi.ArgumentList.Add("-v");
+            psi.ArgumentList.Add("error");
+            psi.ArgumentList.Add("-hide_banner");
+            psi.ArgumentList.Add("-show_entries");
+            psi.ArgumentList.Add("format_tags=comment");
+            psi.ArgumentList.Add("-of");
+            psi.ArgumentList.Add("default=noprint_wrappers=1:nokey=1");
+            psi.ArgumentList.Add(path);
+
+            using var process = Process.Start(psi);
+            if (process == null)
+                return null;
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            if (process.ExitCode != 0)
+                return null;
+
+            var comment = stdout.Trim();
+            if (string.IsNullOrWhiteSpace(comment))
+                return null;
+
+            // Parse location from comment format: "EventTimeUTC=...; Location=..."
+            var locationPrefix = "Location=";
+            var parts = comment.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                var trimmed = part.Trim();
+                if (trimmed.StartsWith(locationPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return trimmed.Substring(locationPrefix.Length).Trim();
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to read export metadata from {Path}", path);
+            return null;
+        }
+    }
+
     [HttpGet]
     public IActionResult ExportFile(string path)
     {
@@ -120,6 +179,7 @@ public class ApiController : ControllerBase
         public DateTime CreatedUtc { get; set; }
         public string JobId { get; set; }
         public ExportStatus Status { get; set; }
+        public string Location { get; set; }
     }
 
     [HttpGet]
@@ -161,7 +221,8 @@ public class ApiController : ControllerBase
                     SizeBytes = fi.Length,
                     CreatedUtc = fi.CreationTimeUtc,
                     JobId = jobId,
-                    Status = st
+                    Status = st,
+                    Location = TryReadLocationMetadata(fi.FullName)
                 });
             }
             catch { }
