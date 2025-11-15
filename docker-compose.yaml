@@ -11,10 +11,6 @@ services:
       - ENABLE_DELETE=false # Enable delete functionality in the web UI
       - EXPORT_ROOT_PATH=/export
       - EXPORT_RETENTION_HOURS=0
-      - ELASTIC_APM_SERVER_URL=http://apm-server:8200
-      # - ELASTIC_APM_SECRET_TOKEN=your-secret
-      - ELASTIC_APM_SERVICE_NAME=teslacamplayer
-      - ELASTIC_APM_ENVIRONMENT=prod
     volumes:
       - appdata:/config
       - /Users/megabitus/Movies/TeslaCam:/media
@@ -23,44 +19,8 @@ services:
       - 5500:5000
     restart: unless-stopped
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:-9.1.5}
-    container_name: elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms1g -Xmx1g
-    ports:
-      - "9200:9200"
-    volumes:
-      - es-data:/usr/share/elasticsearch/data
-
-  kibana:
-    image: docker.elastic.co/kibana/kibana:${STACK_VERSION:-9.1.5}
-    container_name: kibana
-    environment:
-      - ELASTICSEARCH_HOSTS=["http://elasticsearch:9200"]
-    depends_on:
-      - elasticsearch
-    ports:
-      - "5601:5601"
-
-  apm-server:
-    image: docker.elastic.co/apm/apm-server:${STACK_VERSION:-9.1.5}
-    depends_on:
-      - elasticsearch
-    ports:
-      - "8200:8200"
-    # pass ONLY flags; entrypoint is already the apm-server binary in 9.x
-    command: ["-e",
-              "-E", "apm-server.host=0.0.0.0:8200",
-              "-E", "apm-server.rum.enabled=true",
-              "-E", "output.elasticsearch.hosts=[\"http://elasticsearch:9200\"]"]
-
 volumes:
   appdata:
     driver: local
   exportdata:
-    driver: local
-  es-data:
     driver: local

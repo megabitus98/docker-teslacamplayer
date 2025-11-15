@@ -9,7 +9,6 @@
     "author": "",
     "license": "ISC",
     "devDependencies": {
-        "@elastic/apm-rum": "^5.17.0",
         "esbuild": "^0.25.10",
         "gulp": "5.0.0",
         "gulp-autoprefixer": "8.0.0",

@@ -31,7 +31,6 @@ This project leverages a modern technology stack to provide an efficient and sca
 - **SignalR**: Enables real-time communication between the server and clients for live updates and notifications
 - **SQLite**: Lightweight database for storing clip metadata and application settings
 - **FFmpeg**: Essential for video processing and analysis, extracting metadata and handling video formats
-- **Elastic APM**: Provides application performance monitoring and observability
 
 ### Frontend Technologies
 - **Blazor WebAssembly**: Enables building interactive web UIs using C# instead of JavaScript
@@ -51,7 +50,7 @@ This project leverages a modern technology stack to provide an efficient and sca
 - Export functionality with retention policies
 - Responsive design for various screen sizes
 - Secure authentication and authorization mechanisms
-- Performance monitoring and observability
+
 ## Application Setup
 
 The WebUI can be found at `http://your-ip:5000`, this app is a modified fork of [Rene-Sackers/TeslaCamPlayer](https://github.com/Rene-Sackers/TeslaCamPlayer) with an updated UI, delete button and some other tweaks.

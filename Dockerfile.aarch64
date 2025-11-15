@@ -40,26 +40,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/ ./
 RUN npx gulp default
 
-# ---- APM CONFIG (build-time overridable) ----
-ARG APM_SERVICE_NAME=teslacamplayer-client
-ARG APM_SERVER_URL=http://localhost:8200
-ARG APM_SERVICE_VERSION=dev
-ARG APM_ENVIRONMENT=production
-# Optional: comma-separated list of origins (e.g. https://api.example.com,https://other.example.com)
-ARG APM_DTO=
-
-# 1) write /wwwroot/apm-config.js (read by apm.ts at runtime)
-RUN node -e "const fs=require('fs'); \
-const dto=(process.env.APM_DTO||'').split(',').map(s=>s.trim()).filter(Boolean); \
-const cfg={serviceName:process.env.APM_SERVICE_NAME,serverUrl:process.env.APM_SERVER_URL,serviceVersion:process.env.APM_SERVICE_VERSION,environment:process.env.APM_ENVIRONMENT}; \
-if(dto.length) cfg.distributedTracingOrigins=dto; \
-fs.writeFileSync('wwwroot/apm-config.js','window.__APM__='+JSON.stringify(cfg));"
-
-# 2) bundle src/apm.ts -> wwwroot/js/apm.js
-RUN npx --yes esbuild src/apm.ts --bundle --platform=browser --format=iife --outfile=wwwroot/js/apm.js
-
-# (your existing css copy—leave as-is)
-RUN mkdir -p /client-static/ && cp -r wwwroot/ /client-static/
+# Copy only the contents of wwwroot/css into /client-static/css
+RUN mkdir -p /client-static/css && cp -r wwwroot/css/. /client-static/css/
 
 ######## runtime: keep linuxserver base (Ubuntu noble arm64) ########
 FROM ghcr.io/imagegenius/baseimage-ubuntu:arm64v8-noble
@@ -82,9 +64,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy published app + client css
+# Copy published server + client CSS
 COPY --from=dotnet-builder /tmp/publish/ /app/teslacamplayer/
-COPY --from=client-build /client-static/ /app/teslacamplayer/
+COPY --from=client-build   /client-static/css/ /app/teslacamplayer/wwwroot/css/
 
 # Your existing s6 services (root/) still work
 COPY root/ /

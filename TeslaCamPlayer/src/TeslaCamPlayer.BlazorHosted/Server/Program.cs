@@ -22,7 +22,6 @@ builder.Services.AddTransient<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddHostedService<ExportCleanupService>();
 builder.Services.AddSignalR();
-builder.Services.AddAllElasticApm();  // registers ASP.NET Core + EF Core instrumentations
 #if WINDOWS
 builder.Services.AddTransient<IFfProbeService, FfProbeServiceWindows>();
 #elif DOCKER
