@@ -1,6 +1,7 @@
 @page "/exports"
 @using TeslaCamPlayer.BlazorHosted.Shared.Models
 @inject HttpClient Http
+@inject NavigationManager NavigationManager
 
 <div class="pa-4" style="width:100%; height:100%; box-sizing:border-box;">
     <MudText Typo="Typo.h5" Class="mb-2">Export History</MudText>
@@ -27,14 +28,32 @@
                 }
             </MudTd>
             <MudTd DataLabel="Action">
-                @if (context.Status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(context.Url))
-                {
-                    <MudButton Size="Size.Small" Color="Color.Success" Href="@context.Url" Target="_blank">Download</MudButton>
-                }
-                @if (context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending)
-                {
-                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" OnClick="@(() => CancelAsync(context.JobId))">Cancel</MudButton>
-                }
+                <div class="d-flex gap-2">
+                    @if (context.Status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(context.Url))
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined" Href="@context.Url" Target="_blank">Download</MudButton>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(context.EventPath))
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined" OnClick="@(() => OpenEvent(context.EventPath))">Open Event</MudButton>
+                    }
+                    @if ((context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending) && !_canceling.Contains(context.JobId))
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" OnClick="@(() => CancelAsync(context.JobId))">Cancel</MudButton>
+                    }
+                    @if (_canceling.Contains(context.JobId))
+                    {
+                        <MudButton Size="Size.Small" Disabled="true" Variant="Variant.Outlined">Cancelling…</MudButton>
+                    }
+                    @if (context.Status?.State == ExportState.Completed && !_deleting.Contains(context.JobId))
+                    {
+                        <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" OnClick="@(() => DeleteAsync(context.JobId))">Delete</MudButton>
+                    }
+                    @if (_deleting.Contains(context.JobId))
+                    {
+                        <MudButton Size="Size.Small" Disabled="true" Variant="Variant.Outlined">Deleting…</MudButton>
+                    }
+                </div>
             </MudTd>
         </RowTemplate>
     </MudTable>
@@ -50,10 +69,13 @@
         public string JobId { get; set; }
         public ExportStatus Status { get; set; }
         public string Location { get; set; }
+        public string EventPath { get; set; }
     }
 
     private List<ExportItemVm> _items = new();
     private System.Timers.Timer _timer;
+    private readonly HashSet<string> _canceling = new();
+    private readonly HashSet<string> _deleting = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -69,6 +91,11 @@
         {
             var data = await Http.GetFromJsonAsync<List<ExportItemVm>>("Api/ListExports");
             _items = data ?? new List<ExportItemVm>();
+
+            // Clean up tracking sets
+            _canceling.RemoveWhere(id => _items.All(x => x.JobId != id || (x.Status?.State != ExportState.Running && x.Status?.State != ExportState.Pending)));
+            _deleting.RemoveWhere(id => _items.All(x => x.JobId != id));
+
             StateHasChanged();
         }
         catch { }
@@ -89,8 +116,51 @@
 
     private async Task CancelAsync(string jobId)
     {
-        if (string.IsNullOrWhiteSpace(jobId)) return;
-        try { await Http.PostAsync($"Api/CancelExport?jobId={Uri.EscapeDataString(jobId)}", new StringContent(string.Empty)); }
+        if (string.IsNullOrWhiteSpace(jobId) || _canceling.Contains(jobId)) return;
+
+        _canceling.Add(jobId);
+        StateHasChanged();
+
+        try
+        {
+            await Http.PostAsync($"Api/CancelExport?jobId={Uri.EscapeDataString(jobId)}", new StringContent(string.Empty));
+        }
         catch { }
+        finally
+        {
+            // LoadAsync will clean up the _canceling set
+        }
+    }
+
+    private async Task DeleteAsync(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId) || _deleting.Contains(jobId)) return;
+
+        _deleting.Add(jobId);
+        StateHasChanged();
+
+        try
+        {
+            var response = await Http.DeleteAsync($"Api/DeleteExport?jobId={Uri.EscapeDataString(jobId)}");
+            if (response.IsSuccessStatusCode)
+            {
+                // Remove from list and reload
+                await LoadAsync();
+            }
+        }
+        catch { }
+        finally
+        {
+            _deleting.Remove(jobId);
+            StateHasChanged();
+        }
+    }
+
+    private void OpenEvent(string eventPath)
+    {
+        if (!string.IsNullOrWhiteSpace(eventPath))
+        {
+            NavigationManager.NavigateTo($"/?eventPath={Uri.EscapeDataString(eventPath)}");
+        }
     }
 }

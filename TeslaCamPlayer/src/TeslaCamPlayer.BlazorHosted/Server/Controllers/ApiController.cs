@@ -95,7 +95,7 @@ public class ApiController : ControllerBase
         return PhysicalFile(path, contentType, enableRangeProcessing);
     }
 
-    private static string TryReadLocationMetadata(string path)
+    private static (string location, string eventPath) TryReadExportMetadata(string path)
     {
         try
         {
@@ -118,37 +118,43 @@ public class ApiController : ControllerBase
 
             using var process = Process.Start(psi);
             if (process == null)
-                return null;
+                return (null, null);
 
             var stdout = process.StandardOutput.ReadToEnd();
             process.StandardError.ReadToEnd();
             process.WaitForExit();
 
             if (process.ExitCode != 0)
-                return null;
+                return (null, null);
 
             var comment = stdout.Trim();
             if (string.IsNullOrWhiteSpace(comment))
-                return null;
+                return (null, null);
 
-            // Parse location from comment format: "EventTimeUTC=...; Location=..."
-            var locationPrefix = "Location=";
+            // Parse metadata from comment format: "EventTimeUTC=...; Location=...; EventPath=..."
             var parts = comment.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            string location = null;
+            string eventPath = null;
+
             foreach (var part in parts)
             {
                 var trimmed = part.Trim();
-                if (trimmed.StartsWith(locationPrefix, StringComparison.OrdinalIgnoreCase))
+                if (trimmed.StartsWith("Location=", StringComparison.OrdinalIgnoreCase))
                 {
-                    return trimmed.Substring(locationPrefix.Length).Trim();
+                    location = trimmed.Substring("Location=".Length).Trim();
+                }
+                else if (trimmed.StartsWith("EventPath=", StringComparison.OrdinalIgnoreCase))
+                {
+                    eventPath = trimmed.Substring("EventPath=".Length).Trim();
                 }
             }
 
-            return null;
+            return (location, eventPath);
         }
         catch (Exception ex)
         {
             Log.Debug(ex, "Failed to read export metadata from {Path}", path);
-            return null;
+            return (null, null);
         }
     }
 
@@ -180,6 +186,7 @@ public class ApiController : ControllerBase
         public string JobId { get; set; }
         public ExportStatus Status { get; set; }
         public string Location { get; set; }
+        public string EventPath { get; set; }
     }
 
     [HttpGet]
@@ -214,6 +221,7 @@ public class ApiController : ControllerBase
                     url = $"/Api/ExportFile?path={Uri.EscapeDataString(Path.GetFullPath(path))}";
                 }
 
+                var (location, eventPath) = TryReadExportMetadata(fi.FullName);
                 items.Add(new ExportItem
                 {
                     FileName = fi.Name,
@@ -222,7 +230,8 @@ public class ApiController : ControllerBase
                     CreatedUtc = fi.CreationTimeUtc,
                     JobId = jobId,
                     Status = st,
-                    Location = TryReadLocationMetadata(fi.FullName)
+                    Location = location,
+                    EventPath = eventPath
                 });
             }
             catch { }
@@ -270,5 +279,41 @@ public class ApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(jobId)) return BadRequest();
         var ok = _exportService.Cancel(jobId);
         return ok ? Ok() : NotFound();
+    }
+
+    [HttpDelete]
+    public IActionResult DeleteExport(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return BadRequest("Job ID is required");
+
+        try
+        {
+            var exportRoot = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
+            if (string.IsNullOrWhiteSpace(exportRoot) || !Directory.Exists(exportRoot))
+                return NotFound("Export directory not found");
+
+            // Find the export file by jobId
+            var files = Directory.EnumerateFiles(exportRoot)
+                .Where(f => Path.GetFileNameWithoutExtension(f).Equals(jobId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (!files.Any())
+                return NotFound("Export file not found");
+
+            // Delete all matching files (should typically be just one)
+            foreach (var file in files)
+            {
+                System.IO.File.Delete(file);
+                Log.Information("Deleted export file: {File}", file);
+            }
+
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Error deleting export file for job {JobId}", jobId);
+            return StatusCode(500, $"Error deleting export: {ex.Message}");
+        }
     }
 }

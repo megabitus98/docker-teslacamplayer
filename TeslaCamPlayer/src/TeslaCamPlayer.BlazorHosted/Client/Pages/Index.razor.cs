@@ -99,9 +99,31 @@ public partial class Index : ComponentBase, IAsyncDisposable
         if (!_setDatePickerInitialDate && _filteredclips?.Any() == true && _datePicker != null)
         {
             _setDatePickerInitialDate = true;
-            var latestClip = _filteredclips.MaxBy(c => c.EndDate)!;
-            await _datePicker.GoToDate(latestClip.EndDate);
-            await SetActiveClip(latestClip);
+
+            // Check if there's an eventPath query parameter
+            var uri = new Uri(NavigationManager.Uri);
+            var queryParams = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var eventPath = queryParams["eventPath"];
+
+            Clip clipToOpen = null;
+
+            // If eventPath is provided, try to find and open that event
+            if (!string.IsNullOrWhiteSpace(eventPath))
+            {
+                clipToOpen = _clips?.FirstOrDefault(c => string.Equals(c.DirectoryPath, eventPath, StringComparison.OrdinalIgnoreCase));
+
+                // Clear the query parameter from the URL after handling it
+                NavigationManager.NavigateTo("/", replace: true);
+            }
+
+            // If no specific event found or no query param, use the latest clip
+            if (clipToOpen == null)
+            {
+                clipToOpen = _filteredclips.MaxBy(c => c.EndDate)!;
+            }
+
+            await _datePicker.GoToDate(clipToOpen.EndDate);
+            await SetActiveClip(clipToOpen);
         }
     }
 
@@ -429,7 +451,20 @@ public partial class Index : ComponentBase, IAsyncDisposable
         };
 
         var dlg = DialogService.Show<ExportHistoryDialog>("Export History", options);
-        await dlg.Result;
+        var result = await dlg.Result;
+
+        // Check if user clicked "Open Event" and returned an event path
+        if (result != null && !result.Canceled && result.Data is string eventPath && !string.IsNullOrWhiteSpace(eventPath))
+        {
+            // Find the clip by DirectoryPath
+            var clip = _clips?.FirstOrDefault(c => string.Equals(c.DirectoryPath, eventPath, StringComparison.OrdinalIgnoreCase));
+            if (clip != null)
+            {
+                // Set the active clip and scroll to it
+                await SetActiveClip(clip);
+                await ScrollListToActiveClip();
+            }
+        }
     }
 
     private async Task DeleteEventAsync()

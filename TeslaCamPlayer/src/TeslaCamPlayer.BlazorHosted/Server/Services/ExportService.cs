@@ -370,11 +370,15 @@ public class ExportService : IExportService
                 var utc = eventTime.ToUniversalTime().ToString("o");
                 argv.Add("-metadata"); argv.Add($"title=TeslaCamPlayer Export");
 
-                // Build comment with EventTimeUTC and Location
+                // Build comment with EventTimeUTC, Location, and EventPath
                 var commentParts = new List<string> { $"EventTimeUTC={utc}" };
                 if (!string.IsNullOrWhiteSpace(locationDescription))
                 {
                     commentParts.Add($"Location={locationDescription}");
+                }
+                if (!string.IsNullOrWhiteSpace(request.ClipDirectoryPath))
+                {
+                    commentParts.Add($"EventPath={request.ClipDirectoryPath}");
                 }
                 argv.Add("-metadata"); argv.Add($"comment={string.Join("; ", commentParts)}");
 

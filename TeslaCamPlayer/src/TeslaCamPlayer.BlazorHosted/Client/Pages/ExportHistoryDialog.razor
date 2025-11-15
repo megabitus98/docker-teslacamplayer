@@ -32,18 +32,32 @@
                         }
                     </MudTd>
                     <MudTd DataLabel="Action">
-                        @if (context.Status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(context.Url))
-                        {
-                            <MudButton Size="Size.Small" Color="Color.Success" Href="@context.Url" Target="_blank">Download</MudButton>
-                        }
-                        @if ((context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending) && !_canceling.Contains(context.JobId))
-                        {
-                            <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" OnClick="@(() => Cancel(context.JobId))">Cancel</MudButton>
-                        }
-                        @if (_canceling.Contains(context.JobId))
-                        {
-                            <MudButton Size="Size.Small" Disabled="true" Variant="Variant.Outlined">Cancelling…</MudButton>
-                        }
+                        <div class="d-flex gap-2">
+                            @if (context.Status?.State == ExportState.Completed && !string.IsNullOrWhiteSpace(context.Url))
+                            {
+                                <MudButton Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined" Href="@context.Url" Target="_blank">Download</MudButton>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(context.EventPath))
+                            {
+                                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined" OnClick="@(() => OpenEvent(context.EventPath))">Open Event</MudButton>
+                            }
+                            @if ((context.Status?.State == ExportState.Running || context.Status?.State == ExportState.Pending) && !_canceling.Contains(context.JobId))
+                            {
+                                <MudButton Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" OnClick="@(() => Cancel(context.JobId))">Cancel</MudButton>
+                            }
+                            @if (_canceling.Contains(context.JobId))
+                            {
+                                <MudButton Size="Size.Small" Disabled="true" Variant="Variant.Outlined">Cancelling…</MudButton>
+                            }
+                            @if (context.Status?.State == ExportState.Completed && !_deleting.Contains(context.JobId))
+                            {
+                                <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" OnClick="@(() => Delete(context.JobId))">Delete</MudButton>
+                            }
+                            @if (_deleting.Contains(context.JobId))
+                            {
+                                <MudButton Size="Size.Small" Disabled="true" Variant="Variant.Outlined">Deleting…</MudButton>
+                            }
+                        </div>
                     </MudTd>
                 </RowTemplate>
             </MudTable>
@@ -68,10 +82,12 @@
         public string JobId { get; set; }
         public ExportStatus Status { get; set; }
         public string Location { get; set; }
+        public string EventPath { get; set; }
     }
 
     private readonly SemaphoreSlim _loadSemaphore = new(1, 1);
     private readonly HashSet<string> _canceling = new();
+    private readonly HashSet<string> _deleting = new();
     private readonly List<ExportItemVm> _items = new();
     private IDisposable _subscription;
     private bool _subscribedToAll;
@@ -139,6 +155,10 @@
 
                 // Drop any 'canceling' flags for jobs no longer running
                 _canceling.RemoveWhere(id => _items.All(x => x.JobId != id || (x.Status?.State != ExportState.Running && x.Status?.State != ExportState.Pending)));
+
+                // Drop any 'deleting' flags for jobs that no longer exist
+                _deleting.RemoveWhere(id => _items.All(x => x.JobId != id));
+
                 StateHasChanged();
             });
         }
@@ -186,6 +206,46 @@
     void Close()
     {
         MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    void OpenEvent(string eventPath)
+    {
+        MudDialog.Close(DialogResult.Ok(eventPath));
+    }
+
+    private async Task Delete(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId) || _deleting.Contains(jobId))
+            return;
+
+        _deleting.Add(jobId);
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var response = await Http.DeleteAsync($"Api/DeleteExport?jobId={Uri.EscapeDataString(jobId)}");
+            if (response.IsSuccessStatusCode)
+            {
+                // Remove the item from the list
+                var item = _items.FirstOrDefault(x => x.JobId == jobId);
+                if (item != null)
+                {
+                    _items.Remove(item);
+                }
+                _deleting.Remove(jobId);
+                await InvokeAsync(StateHasChanged);
+            }
+            else
+            {
+                _deleting.Remove(jobId);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch
+        {
+            _deleting.Remove(jobId);
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     public async ValueTask DisposeAsync()
