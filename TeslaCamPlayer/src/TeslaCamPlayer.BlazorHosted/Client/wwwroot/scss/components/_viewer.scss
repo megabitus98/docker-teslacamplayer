@@ -243,6 +243,170 @@
             .mud-slider {
                 z-index: $z-timeline;
             }
+
+            // Export range visual elements
+            .export-range-highlight {
+                position: absolute;
+                height: 100%;
+                background: linear-gradient(90deg, rgba(33, 150, 243, 0.15), rgba(33, 150, 243, 0.25));
+                border-left: 2px solid rgba(33, 150, 243, 0.6);
+                border-right: 2px solid rgba(33, 150, 243, 0.6);
+                pointer-events: none;
+                z-index: calc($z-timeline - 1);
+                border-radius: 4px;
+                transition: all 0.2s ease;
+            }
+
+            .export-range-marker {
+                position: absolute;
+                height: 100%;
+                width: 20px;
+                pointer-events: auto;
+                z-index: calc($z-timeline + 1);
+                transform: translateX(-50%);
+                cursor: ew-resize;
+                user-select: none;
+                -webkit-user-select: none;
+                touch-action: none;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+
+                .marker-handle {
+                    position: relative;
+                    width: 3px;
+                    height: 100%;
+                    border-radius: 2px;
+                    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+                    cursor: ew-resize;
+
+                    &::before {
+                        content: '';
+                        position: absolute;
+                        top: -4px;
+                        left: 50%;
+                        transform: translateX(-50%);
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 50%;
+                        transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+                    }
+
+                    &::after {
+                        content: '';
+                        position: absolute;
+                        bottom: -4px;
+                        left: 50%;
+                        transform: translateX(-50%);
+                        width: 0;
+                        height: 0;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+                    }
+                }
+
+                &.export-start-marker .marker-handle {
+                    background: #2196f3;
+                    box-shadow: 0 0 8px rgba(33, 150, 243, 0.4), 0 2px 4px rgba(0, 0, 0, 0.2);
+
+                    &::before {
+                        background: #2196f3;
+                        box-shadow: 0 0 6px rgba(33, 150, 243, 0.6), 0 2px 4px rgba(0, 0, 0, 0.2);
+                    }
+
+                    &::after {
+                        border-top: 5px solid #2196f3;
+                    }
+                }
+
+                &.export-end-marker .marker-handle {
+                    background: #f44336;
+                    box-shadow: 0 0 8px rgba(244, 67, 54, 0.4), 0 2px 4px rgba(0, 0, 0, 0.2);
+
+                    &::before {
+                        background: #f44336;
+                        box-shadow: 0 0 6px rgba(244, 67, 54, 0.6), 0 2px 4px rgba(0, 0, 0, 0.2);
+                    }
+
+                    &::after {
+                        border-top: 5px solid #f44336;
+                    }
+                }
+
+                &:hover .marker-handle {
+                    width: 4px;
+
+                    &::before {
+                        width: 12px;
+                        height: 12px;
+                        top: -5px;
+                    }
+
+                    &::after {
+                        border-left-width: 5px;
+                        border-right-width: 5px;
+                        border-top-width: 6px;
+                        bottom: -5px;
+                    }
+                }
+
+                &.export-start-marker:hover .marker-handle {
+                    box-shadow: 0 0 12px rgba(33, 150, 243, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+
+                    &::before {
+                        box-shadow: 0 0 10px rgba(33, 150, 243, 0.8), 0 2px 6px rgba(0, 0, 0, 0.3);
+                    }
+                }
+
+                &.export-end-marker:hover .marker-handle {
+                    box-shadow: 0 0 12px rgba(244, 67, 54, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+
+                    &::before {
+                        box-shadow: 0 0 10px rgba(244, 67, 54, 0.8), 0 2px 6px rgba(0, 0, 0, 0.3);
+                    }
+                }
+
+                &:active .marker-handle {
+                    width: 4px;
+
+                    &::before {
+                        transform: translateX(-50%) scale(0.9);
+                    }
+                }
+            }
+        }
+
+        // Timeline info bar styles
+        .timeline-info-bar {
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 8px;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+
+            .timeline-label {
+                opacity: 0.9;
+                white-space: nowrap;
+
+                &.export-start {
+                    color: #1976d2;
+                }
+
+                &.export-end {
+                    color: #d32f2f;
+                }
+
+                strong {
+                    font-weight: 600;
+                }
+            }
+        }
+
+        // Enhanced export mode appearance
+        .seeker-slider-container.export-mode {
+            .slider-container {
+                padding: 4px 0;
+            }
         }
     }
 }

@@ -172,4 +172,87 @@ public partial class ClipViewer : ComponentBase, IDisposable
         _exportRange = (start, end);
         return Task.CompletedTask;
     }
+
+    private string ExportRangeHighlightStyle()
+    {
+        if (_timelineMaxSeconds <= 0) return "display:none;";
+
+        var startPercent = (_exportRange.Start / _timelineMaxSeconds) * 100;
+        var endPercent = (_exportRange.End / _timelineMaxSeconds) * 100;
+        var width = endPercent - startPercent;
+
+        return $"left: {startPercent:F2}%; width: {width:F2}%;";
+    }
+
+    private string ExportStartMarkerStyle()
+    {
+        if (_timelineMaxSeconds <= 0) return "display:none;";
+
+        var percent = (_exportRange.Start / _timelineMaxSeconds) * 100;
+        return $"left: {percent:F2}%;";
+    }
+
+    private string ExportEndMarkerStyle()
+    {
+        if (_timelineMaxSeconds <= 0) return "display:none;";
+
+        var percent = (_exportRange.End / _timelineMaxSeconds) * 100;
+        return $"left: {percent:F2}%;";
+    }
+
+    private void OnExportStartMarkerPointerDown(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _draggingMarker = DragMarker.Start;
+    }
+
+    private void OnExportEndMarkerPointerDown(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _draggingMarker = DragMarker.End;
+    }
+
+    private async Task OnSliderContainerPointerMove(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        if (_draggingMarker == DragMarker.None || _timelineMaxSeconds <= 0)
+        {
+            return;
+        }
+
+        // Get the bounding rect of the slider container using JS
+        var rect = await JsRuntime.InvokeAsync<BoundingRect>("getElementBoundingRect", _sliderContainerRef);
+        if (rect == null || rect.Width <= 0)
+        {
+            return;
+        }
+
+        // Calculate the percentage based on mouse position
+        var relativeX = e.ClientX - rect.Left;
+        var percent = Math.Clamp(relativeX / rect.Width, 0, 1);
+        var newValue = percent * _timelineMaxSeconds;
+
+        // Update the appropriate marker
+        if (_draggingMarker == DragMarker.Start)
+        {
+            await OnExportStartChanged(newValue);
+        }
+        else if (_draggingMarker == DragMarker.End)
+        {
+            await OnExportEndChanged(newValue);
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnSliderContainerPointerUp(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _draggingMarker = DragMarker.None;
+        return Task.CompletedTask;
+    }
+
+    private class BoundingRect
+    {
+        public double Left { get; set; }
+        public double Top { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+    }
 }

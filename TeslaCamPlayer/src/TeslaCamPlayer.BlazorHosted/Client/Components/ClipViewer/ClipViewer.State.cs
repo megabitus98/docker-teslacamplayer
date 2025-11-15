@@ -31,6 +31,9 @@ public partial class ClipViewer
     private ElementReference _gridElement;
     private DotNetObjectReference<ClipViewer> _objRef;
     private (double Start, double End) _exportRange;
+    private enum DragMarker { None, Start, End }
+    private DragMarker _draggingMarker = DragMarker.None;
+    private ElementReference _sliderContainerRef;
 
     private double TimelineValue
     {

@@ -150,3 +150,17 @@ window.clipViewer.animateFullscreenExit = async function (gridEl, tileEl) {
 
     return await playFlipAnimation(tileEl, startRect, endRect, { removePendingClass: true });
 };
+
+// Helper function for getting element bounding rect
+function getElementBoundingRect(element) {
+    if (!element) {
+        return null;
+    }
+    const rect = element.getBoundingClientRect();
+    return {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+    };
+}
