@@ -98,10 +98,9 @@
                     <ItemContent>
                         <div class="event @(_activeClip == context ? "event--active" : null)" @key="@context.EndDate"
                              @onclick="@(() => SetActiveClip(context))">
-                            @if (!string.IsNullOrWhiteSpace(context.ThumbnailUrl))
-                            {
-                                <img class="thumbnail" src="@context.ThumbnailUrl" loading="lazy" />
-                            }
+                            <img class="thumbnail"
+                                 src="@(!string.IsNullOrWhiteSpace(context.ThumbnailUrl) ? context.ThumbnailUrl : "/img/no-thumbnail.png")"
+                                 loading="lazy" />
                             <div class="details ml-2">
                                 <div class="icons">
                                     @foreach (var icon in GetClipIcons(context))
