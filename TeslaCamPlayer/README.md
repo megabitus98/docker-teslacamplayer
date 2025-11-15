@@ -76,6 +76,7 @@ docker run \
 | ElasticApm__Rum__ServerUrl | https://apm.example.com | Overrides the RUM intake URL (falls back to `ServerUrls` when empty). |
 | ElasticApm__Rum__ServiceName | teslacamplayer-web | Name reported by the browser agent. Use separate names per environment if desired. |
 | ElasticApm__Rum__DistributedTracingOrigins__0 | https://api.example.com | Allows the browser agent to propagate trace context to additional origins (repeat with `__1`, `__2`, ... for more). |
+| EXPORT_RETENTION_HOURS | 24 | Hours to keep exported clips before cleanup runs. Set to `0` to disable automatic deletion entirely (service logs the status during startup). |
 
 ### Volumes
 

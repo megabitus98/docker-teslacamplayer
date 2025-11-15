@@ -113,6 +113,10 @@ docker run -d \
   docker.io/megabitus/teslacamplayer:latest
 ```
 
+## Export retention
+
+Exports dropped into `EXPORT_ROOT_PATH` are trimmed every hour based on `EXPORT_RETENTION_HOURS` (defaults to `24`). Set `EXPORT_RETENTION_HOURS=0` to disable automatic deletion entirely—the service logs at startup whether cleanup is active so you can confirm the setting took effect.
+
 ## Parameters
 
 To configure the container, pass variables at runtime using the format `<external>:<internal>`. For instance, `-p 8080:80` exposes port `80` inside the container, making it accessible outside the container via the host's IP on port `8080`.
