@@ -129,8 +129,10 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
     private async Task RefreshEventsAsync(bool refreshCache)
     {
-        _filteredclips = null;
-        _clips = null;
+        // Initialize with empty arrays to show the list immediately (even if empty)
+        // rather than showing the loading screen
+        _clips = Array.Empty<Clip>();
+        _filteredclips = Array.Empty<Clip>();
         await Task.Delay(10);
         await InvokeAsync(StateHasChanged);
 
@@ -148,6 +150,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
         _clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=" + refreshCache);
 
         FilterClips();
+        await InvokeAsync(StateHasChanged);
 
         // If we didn't explicitly request a refresh but server may be indexing in the background (first run), start polling
         if (!refreshCache && (_clips == null || _clips.Length == 0))
@@ -240,6 +243,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
             {
                 _clips = clips ?? Array.Empty<Clip>();
                 FilterClips();
+                StateHasChanged();
             });
         }
         catch
