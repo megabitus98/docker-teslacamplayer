@@ -519,7 +519,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
     }
 
     private bool IsDateDisabledFunc(DateTime date)
-        => !_eventDates.Contains(date);
+        => _eventDates?.Contains(date) != true;
 
     private static string[] GetClipIcons(Clip clip)
     {
