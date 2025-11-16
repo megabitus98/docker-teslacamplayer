@@ -90,9 +90,13 @@ body {
     }
 
     .thumbnail {
-        height: 100%;
+        width: 128px;
+        height: 72px;
         transform: none;
         border-radius: 5px;
+        object-fit: cover;
+        flex-shrink: 0;
+        background: url('/img/no-thumbnail.png') center/cover no-repeat;
     }
 
     .details {

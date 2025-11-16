@@ -101,7 +101,10 @@
                              @onclick="@(() => SetActiveClip(context))">
                             <img class="thumbnail"
                                  src="@(!string.IsNullOrWhiteSpace(context.ThumbnailUrl) ? context.ThumbnailUrl : "/img/no-thumbnail.png")"
-                                 loading="lazy" />
+                                 width="128"
+                                 height="72"
+                                 loading="lazy"
+                                 onerror="this.src='/img/no-thumbnail.png'" />
                             <div class="details ml-2">
                                 <div class="icons">
                                     @foreach (var icon in GetClipIcons(context))
@@ -120,7 +123,7 @@
                     </ItemContent>
                     <Placeholder>
                         <div class="event">
-                            <MudSkeleton Class="thumbnail" Width="66.66px" />
+                            <MudSkeleton Class="thumbnail" Width="128px" Height="72px" />
                             <div class="details ml-2">
                                 <div class="icons">
                                     <MudSkeleton Width="20%" />
