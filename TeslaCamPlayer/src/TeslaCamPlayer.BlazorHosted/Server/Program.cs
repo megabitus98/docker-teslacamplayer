@@ -20,6 +20,7 @@ builder.Services.AddSingleton<IRefreshProgressService, RefreshProgressService>()
 builder.Services.AddSingleton<IClipIndexRepository, SqliteClipIndexRepository>();
 builder.Services.AddTransient<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
+builder.Services.AddSingleton<ISeiParserService, SeiParserService>();
 builder.Services.AddHostedService<ExportCleanupService>();
 builder.Services.AddSignalR();
 #if WINDOWS

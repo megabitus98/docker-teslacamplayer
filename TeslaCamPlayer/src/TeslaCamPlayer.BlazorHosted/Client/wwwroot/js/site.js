@@ -164,3 +164,9 @@ function getElementBoundingRect(element) {
         height: rect.height
     };
 }
+
+// Helper to fetch video as ArrayBuffer for SEI parsing
+async function fetchVideoAsArrayBuffer(videoUrl) {
+    const response = await fetch(videoUrl);
+    return await response.arrayBuffer();
+}

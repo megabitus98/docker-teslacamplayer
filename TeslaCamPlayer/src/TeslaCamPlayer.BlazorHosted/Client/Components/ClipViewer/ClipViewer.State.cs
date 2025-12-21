@@ -80,6 +80,14 @@ public partial class ClipViewer
             SetSrcIfChanged(tile.Player, tile.SourceFor(_currentSegment));
         }
 
+        // Parse SEI metadata from the front camera video
+        var frontTile = _tiles.FirstOrDefault(t => t.Tile == Tile.Front);
+        var frontCameraPath = frontTile?.SourceFor(_currentSegment);
+        if (!string.IsNullOrEmpty(frontCameraPath))
+        {
+            _ = ParseVideoSeiMetadataAsync(frontCameraPath);
+        }
+
         if (_loadSegmentCts.IsCancellationRequested)
         {
             return false;

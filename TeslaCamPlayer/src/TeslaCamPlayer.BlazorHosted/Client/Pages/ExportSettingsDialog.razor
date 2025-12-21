@@ -23,6 +23,7 @@
                 <MudCheckBox Class="wrap-label" @bind-Checked="IncludeTimestamp" Label="Include timestamp overlay" />
                 <MudCheckBox Class="wrap-label" @bind-Checked="IncludeLabels" Label="Include camera labels" />
                 <MudCheckBox Class="wrap-label" @bind-Checked="IncludeLocation" Label="Include location overlay (city/GPS)" />
+                <MudCheckBox Class="wrap-label" @bind-Checked="IncludeSeiHud" Label="Include SEI HUD overlay (telemetry data)" />
             </div>
         </div>
     </DialogContent>
@@ -41,9 +42,10 @@
     [Parameter] public bool IncludeTimestamp { get; set; } = true;
     [Parameter] public bool IncludeLabels { get; set; } = true;
     [Parameter] public bool IncludeLocation { get; set; } = true;
+    [Parameter] public bool IncludeSeiHud { get; set; } = false;
 
-    public record Result(string Format, string Resolution, string Quality, bool IncludeTimestamp, bool IncludeLabels, bool IncludeLocation);
+    public record Result(string Format, string Resolution, string Quality, bool IncludeTimestamp, bool IncludeLabels, bool IncludeLocation, bool IncludeSeiHud);
 
     void Cancel() => MudDialog.Cancel();
-    void Confirm() => MudDialog.Close(DialogResult.Ok(new Result(Format, Resolution, Quality, IncludeTimestamp, IncludeLabels, IncludeLocation)));
+    void Confirm() => MudDialog.Close(DialogResult.Ok(new Result(Format, Resolution, Quality, IncludeTimestamp, IncludeLabels, IncludeLocation, IncludeSeiHud)));
 }

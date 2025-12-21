@@ -9,6 +9,7 @@ WORKDIR /src
 # Restore with caching (global + HTTP cache)
 COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/*.csproj TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/
 COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/*.csproj TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Client/
+COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Shared/*.csproj TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Shared/
 RUN --mount=type=cache,target=/root/.nuget/packages \
     --mount=type=cache,target=/root/.local/share/NuGet/v3-cache \
     dotnet restore TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server

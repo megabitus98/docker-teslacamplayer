@@ -28,6 +28,7 @@ public partial class ClipViewer : ComponentBase, IDisposable
     {
         _setVideoTimeDebounceTimer = new(500);
         _setVideoTimeDebounceTimer.Elapsed += ScrubVideoDebounceTick;
+        _ = InitializeSeiParsingAsync();
     }
 
     protected override void OnAfterRender(bool firstRender)
@@ -99,6 +100,8 @@ public partial class ClipViewer : ComponentBase, IDisposable
     {
         try { JsRuntime?.InvokeVoidAsync("unregisterEscHandler"); } catch { }
         try { _objRef?.Dispose(); } catch { }
+        try { _seiHudRef?.DisposeAsync(); } catch { }
+        try { _seiParserModule?.DisposeAsync(); } catch { }
     }
 
     private async void ScrubVideoDebounceTick(object _, ElapsedEventArgs __)

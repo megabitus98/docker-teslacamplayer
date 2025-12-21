@@ -1,0 +1,89 @@
+@namespace TeslaCamPlayer.BlazorHosted.Client.Components
+@inject IJSRuntime JsRuntime
+@implements IAsyncDisposable
+
+<div class="sei-hud-overlay @(_isVisible ? "visible" : "hidden")"
+     @ref="_hudContainerRef"
+     style="display: @(_isVisible ? "block" : "none")">
+    <!-- HUD will be mounted here by JS -->
+</div>
+
+@code {
+    [Parameter]
+    public bool IsVisible { get; set; } = true;
+
+    [Parameter]
+    public EventCallback<bool> IsVisibleChanged { get; set; }
+
+    private ElementReference _hudContainerRef;
+    private IJSObjectReference _hudModule;
+    private IJSObjectReference _hudInstance;
+    private bool _isVisible = true;
+    private DotNetObjectReference<SeiHud> _objRef;
+    private object _currentSeiData;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                _objRef = DotNetObjectReference.Create(this);
+
+                // Import ES6 module for HUD interop
+                _hudModule = await JsRuntime.InvokeAsync<IJSObjectReference>(
+                    "import", "./js/dashcam/sei-hud-interop.js");
+
+                // Initialize HUD instance
+                _hudInstance = await _hudModule.InvokeAsync<IJSObjectReference>(
+                    "initializeSeiHud", _hudContainerRef, _objRef);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SEI HUD initialization failed: {ex.Message}");
+            }
+        }
+    }
+
+    public async ValueTask UpdateSeiDataAsync(object seiData)
+    {
+        _currentSeiData = seiData;
+
+        if (_hudInstance != null)
+        {
+            try
+            {
+                await _hudInstance.InvokeVoidAsync("updateTelemetry", seiData);
+            }
+            catch { }
+        }
+    }
+
+    [JSInvokable]
+    public Task<object> GetCurrentTelemetry()
+    {
+        return Task.FromResult(_currentSeiData);
+    }
+
+    public async Task ToggleVisibilityAsync()
+    {
+        _isVisible = !_isVisible;
+        await IsVisibleChanged.InvokeAsync(_isVisible);
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_hudInstance != null)
+                await _hudInstance.InvokeVoidAsync("unmount");
+
+            if (_hudModule != null)
+                await _hudModule.DisposeAsync();
+
+            _objRef?.Dispose();
+        }
+        catch { }
+    }
+}

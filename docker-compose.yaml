@@ -13,7 +13,8 @@ services:
       - EXPORT_RETENTION_HOURS=0
     volumes:
       - appdata:/config
-      - /Users/megabitus/Movies/TeslaCam:/media
+      # - /Users/megabitus/Movies/TeslaCam:/media
+      - /Volumes/TeslaCam/TeslaCam:/media
       - exportdata:/export
     ports:
       - 5500:5000

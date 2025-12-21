@@ -8,6 +8,9 @@
     },
     "author": "",
     "license": "ISC",
+    "dependencies": {
+        "protobufjs": "^7.2.6"
+    },
     "devDependencies": {
         "esbuild": "^0.25.10",
         "gulp": "5.0.0",

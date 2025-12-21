@@ -1,0 +1,27 @@
+.sei-hud-overlay {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    pointer-events: none;
+    padding-top: 16px;
+    transition: opacity 0.3s ease;
+
+    &.hidden {
+        opacity: 0;
+    }
+
+    &.visible {
+        opacity: 1;
+    }
+}
+
+// Ensure HUD is properly layered
+.video-container {
+    position: relative;
+
+    .sei-hud-root {
+        z-index: 100 !important;
+    }
+}

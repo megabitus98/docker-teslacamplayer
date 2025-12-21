@@ -23,6 +23,7 @@ public class ExportService : IExportService
     private readonly ISettingsProvider _settingsProvider;
     private readonly IClipsService _clipsService;
     private readonly IHubContext<StatusHub> _hubContext;
+    private readonly ISeiParserService _seiParser;
 
     private readonly ConcurrentDictionary<string, ExportStatus> _status = new();
     private readonly ConcurrentDictionary<string, string> _outputs = new();
@@ -84,11 +85,12 @@ public class ExportService : IExportService
             TaskContinuationOptions.OnlyOnFaulted);
     }
 
-    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext)
+    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext, ISeiParserService seiParser)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
         _hubContext = hubContext;
+        _seiParser = seiParser;
     }
 
     public Task<string> StartExportAsync(ExportRequest request)
@@ -130,6 +132,7 @@ public class ExportService : IExportService
 
     private async Task RunExportAsync(string jobId, ExportRequest request, CancellationToken cancel)
     {
+        string srtPath = null;
         try
         {
             if (_status.TryGetValue(jobId, out var current))
@@ -351,6 +354,51 @@ public class ExportService : IExportService
                 finalLabel = "ts";
             }
 
+            // SEI HUD overlay (if requested)
+            if (request.IncludeSeiHud)
+            {
+                // Find front camera file for SEI extraction
+                var frontCameraFile = byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Count > 0
+                    ? byCamera[Cameras.Front][0].path
+                    : null;
+
+                if (frontCameraFile != null)
+                {
+                    var seiMessages = _seiParser.ExtractSeiMessages(frontCameraFile);
+
+                    if (seiMessages.Count > 0)
+                    {
+                        var hudFilterBuilder = new SeiHudFilterBuilder();
+                        srtPath = Path.Combine(exportDir, $"{jobId}_sei.srt");
+                        hudFilterBuilder.GenerateSeiSubtitleFile(seiMessages, 30.0, srtPath);
+
+                        if (File.Exists(srtPath))
+                        {
+                            // Use FFmpeg subtitles filter to burn in SRT
+                            var srtEscaped = srtPath.Replace("\\", "\\\\").Replace(":", "\\:");
+                            var subtitlesFilter = $"subtitles={srtEscaped}:force_style='Alignment=2,MarginV=30,Fontsize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,Bold=1'";
+
+                            var seiHudOut = "[sei_hud]";
+                            filter.Append(';')
+                                  .Append('[').Append(finalLabel).Append(']')
+                                  .Append(subtitlesFilter)
+                                  .Append(seiHudOut);
+                            finalLabel = "sei_hud";
+
+                            Log.Information("SEI HUD overlay added to export {JobId}", jobId);
+                        }
+                    }
+                    else
+                    {
+                        Log.Warning("No SEI metadata found in front camera for export {JobId}", jobId);
+                    }
+                }
+                else
+                {
+                    Log.Warning("SEI HUD requested but no front camera available for export {JobId}", jobId);
+                }
+            }
+
             argv.Add("-filter_complex");
             argv.Add(filter.ToString());
 
@@ -490,6 +538,12 @@ public class ExportService : IExportService
         finally
         {
             if (_cancellations.TryRemove(jobId, out var c)) c.Dispose();
+
+            // Cleanup temporary SRT file
+            if (!string.IsNullOrEmpty(srtPath) && File.Exists(srtPath))
+            {
+                SafeDelete(srtPath);
+            }
         }
     }
 

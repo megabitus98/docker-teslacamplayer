@@ -53,6 +53,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private bool _exportIncludeTimestamp = true;
     private bool _exportIncludeLabels = true;
     private bool _exportIncludeLocation = true;
+    private bool _exportIncludeSeiHud = false;
     private string _exportJobId;
     private ExportStatus _exportStatus;
     private bool _showExportPanel;
@@ -332,6 +333,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
             [nameof(ExportSettingsDialog.IncludeTimestamp)] = _exportIncludeTimestamp,
             [nameof(ExportSettingsDialog.IncludeLabels)] = _exportIncludeLabels,
             [nameof(ExportSettingsDialog.IncludeLocation)] = _exportIncludeLocation,
+            [nameof(ExportSettingsDialog.IncludeSeiHud)] = _exportIncludeSeiHud,
         };
 
         var options = new DialogOptions
@@ -354,6 +356,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
         _exportIncludeTimestamp = res.IncludeTimestamp;
         _exportIncludeLabels = res.IncludeLabels;
         _exportIncludeLocation = res.IncludeLocation;
+        _exportIncludeSeiHud = res.IncludeSeiHud;
 
         await StartExport();
     }
@@ -399,7 +402,8 @@ public partial class Index : ComponentBase, IAsyncDisposable
             Quality = _exportQuality,
             IncludeTimestamp = _exportIncludeTimestamp,
             IncludeCameraLabels = _exportIncludeLabels,
-            IncludeLocationOverlay = _exportIncludeLocation
+            IncludeLocationOverlay = _exportIncludeLocation,
+            IncludeSeiHud = _exportIncludeSeiHud
         };
 
         var resp = await HttpClient.PostAsJsonAsync("Api/StartExport", request);

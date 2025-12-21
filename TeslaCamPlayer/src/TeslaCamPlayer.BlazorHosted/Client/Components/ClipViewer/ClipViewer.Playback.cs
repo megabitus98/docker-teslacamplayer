@@ -137,6 +137,9 @@ public partial class ClipViewer
 
         _ignoreTimelineValue = secondsSinceClipStart;
         TimelineValue = secondsSinceClipStart;
+
+        // Update SEI HUD with current frame data
+        _ = UpdateHudWithCurrentFrameAsync(seconds);
     }
 
     private VideoPlayer GetActiveTimeSourcePlayer()
