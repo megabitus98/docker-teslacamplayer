@@ -83,6 +83,8 @@ public partial class ClipViewer
         // Parse SEI metadata from the front camera video
         var frontTile = _tiles.FirstOrDefault(t => t.Tile == Tile.Front);
         var frontCameraPath = frontTile?.SourceFor(_currentSegment);
+        _currentSeiVideoPath = frontCameraPath ?? string.Empty;
+        await ClearSeiHudAsync();
         if (!string.IsNullOrEmpty(frontCameraPath))
         {
             _ = ParseVideoSeiMetadataAsync(frontCameraPath);

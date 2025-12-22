@@ -66,12 +66,13 @@
                                OnClick="@ToggleGridMode"
                                Class="grid-mode-toggle" />
             </MudTooltip>
-            <MudTooltip Text="@(_showSeiHud ? "Hide telemetry HUD" : "Show telemetry HUD")">
+            <MudTooltip Text="@(!_seiMetadataAvailable ? "Telemetry HUD unavailable (no SEI metadata for this clip)" : (_showSeiHud ? "Hide telemetry HUD" : "Show telemetry HUD"))">
                 <MudIconButton Icon="@Icons.Material.Filled.Sensors"
                                Size="Size.Medium"
                                Variant="Variant.Outlined"
                                Color="@(_showSeiHud ? Color.Primary : Color.Default)"
-                               AriaLabel="@(_showSeiHud ? "Hide HUD" : "Show HUD")"
+                               Disabled="@(!_seiMetadataAvailable)"
+                               AriaLabel="@(!_seiMetadataAvailable ? "Telemetry HUD unavailable (no SEI metadata for this clip)" : (_showSeiHud ? "Hide HUD" : "Show HUD"))"
                                OnClick="@ToggleSeiHud" />
             </MudTooltip>
             <MudBadge Content="@(_playbackSpeed != 1.0 ? $"{_playbackSpeed:0.##}x" : null)"

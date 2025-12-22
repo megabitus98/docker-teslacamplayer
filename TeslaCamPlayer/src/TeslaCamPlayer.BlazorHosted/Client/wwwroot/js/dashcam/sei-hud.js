@@ -139,6 +139,10 @@
   color:rgba(255,255,255,.95);
 }
 
+.sei-hud-root.sei-hud-hidden {
+  display:none;
+}
+
 .sei-hud-wrap {
   display:flex;
   justify-content:center;
@@ -223,7 +227,6 @@
   width:26px;
   height:26px;
   transform:rotate(var(--sei-wheel-rot,0deg));
-  transition:transform .05s linear;
 }
 
 .sei-hud-pedal {
@@ -409,10 +412,32 @@
     };
 
     const hud = createHudDom(opts);
+    hud.root.classList.add("sei-hud-hidden");
     container.appendChild(hud.root);
 
+    let hasTelemetry = false;
+    let steerTargetDeg = 0;
+    let steerDisplayDeg = 0;
+    let steerInitialized = false;
+    let lastFrameTs = performance.now();
+    let lastTargetChangeTs = performance.now();
+
     const stop = rafLoop(() => {
-      const t = normalizeTelemetry(getTelemetry() || {}, opts);
+      const now = performance.now();
+      const dt = now - lastFrameTs;
+      lastFrameTs = now;
+
+      const telemetry = typeof getTelemetry === "function" ? getTelemetry() : null;
+      const hasData = telemetry != null;
+      if (hasTelemetry !== hasData) {
+        hud.root.classList.toggle("sei-hud-hidden", !hasData);
+        hasTelemetry = hasData;
+      }
+      if (!hasData) {
+        steerInitialized = false;
+      }
+
+      const t = normalizeTelemetry(telemetry || {}, opts);
 
       // Speed
       hud.speedVal.textContent = Math.round(Math.max(0, t.speed || 0));
@@ -423,7 +448,23 @@
 
       // Steering wheel rotation
       const steerLimited = clamp(t.steerDeg ?? 0, -DEFAULTS.maxSteerDeg, DEFAULTS.maxSteerDeg);
-      hud.wheelSvg.style.transform = `rotate(${steerLimited}deg)`;
+      if (!steerInitialized) {
+        steerTargetDeg = steerLimited;
+        steerDisplayDeg = steerLimited;
+        steerInitialized = true;
+        lastTargetChangeTs = now;
+      } else {
+        if (steerLimited !== steerTargetDeg) {
+          steerTargetDeg = steerLimited;
+          lastTargetChangeTs = now;
+        }
+        const smoothing = 1 - Math.exp(-Math.max(0, dt) / 110); // easing factor tuned for quick catch-up
+        steerDisplayDeg += (steerTargetDeg - steerDisplayDeg) * smoothing;
+        if (now - lastTargetChangeTs > 500) {
+          steerDisplayDeg = steerTargetDeg; // snap if we're still behind after half a second
+        }
+      }
+      hud.wheelSvg.style.transform = `rotate(${steerDisplayDeg}deg)`;
 
       // Pedal fills - CSS variables for height
       const throttlePct = clamp(t.throttlePct ?? 0, 0, DEFAULTS.maxThrottlePct);

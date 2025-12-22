@@ -12,6 +12,7 @@ public partial class ClipViewer
     private bool _seiMetadataAvailable = false;
     private IJSObjectReference _seiParserModule;
     private string _currentSeiHandle;
+    private string _currentSeiVideoPath;
     private Dictionary<string, string> _seiCache = new();
     private Task _seiInitTask = Task.CompletedTask;
 
@@ -40,12 +41,24 @@ public partial class ClipViewer
 
     private async Task ParseVideoSeiMetadataAsync(string videoFilePath)
     {
+        if (!string.Equals(videoFilePath, _currentSeiVideoPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        await ClearSeiHudAsync();
+
         if (string.IsNullOrEmpty(videoFilePath))
         {
             return;
         }
 
         await _seiInitTask;
+
+        if (!string.Equals(videoFilePath, _currentSeiVideoPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
 
         if (_seiParserModule == null)
         {
@@ -55,9 +68,17 @@ public partial class ClipViewer
         // Check cache first
         if (_seiCache.TryGetValue(videoFilePath, out var cached))
         {
-            _currentSeiHandle = cached;
-            _seiMetadataAvailable = true;
-            await InvokeAsync(StateHasChanged);
+            if (!string.IsNullOrEmpty(cached))
+            {
+                if (!string.Equals(videoFilePath, _currentSeiVideoPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                _currentSeiHandle = cached;
+                _seiMetadataAvailable = true;
+                await InvokeAsync(StateHasChanged);
+            }
             return;
         }
 
@@ -67,8 +88,13 @@ public partial class ClipViewer
             var result = await _seiParserModule.InvokeAsync<string>(
                 "parseVideoSeiFromUrl", videoFilePath);
 
-            if (result != null)
+            if (!string.IsNullOrEmpty(result))
             {
+                if (!string.Equals(videoFilePath, _currentSeiVideoPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
                 _currentSeiHandle = result;
                 _seiCache[videoFilePath] = result;
                 _seiMetadataAvailable = true;
@@ -80,12 +106,16 @@ public partial class ClipViewer
             {
                 Console.WriteLine($"No SEI metadata found in {videoFilePath}");
                 _seiMetadataAvailable = false;
+                _seiCache[videoFilePath] = string.Empty;
+                await InvokeAsync(StateHasChanged);
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"SEI parsing failed for {videoFilePath}: {ex.Message}");
             _seiMetadataAvailable = false;
+            _seiCache[videoFilePath] = string.Empty;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -122,5 +152,18 @@ public partial class ClipViewer
         _showSeiHud = visible;
         StateHasChanged();
         return Task.CompletedTask;
+    }
+
+    private async Task ClearSeiHudAsync()
+    {
+        _currentSeiHandle = null;
+        _seiMetadataAvailable = false;
+
+        if (_seiHudRef != null)
+        {
+            await _seiHudRef.UpdateSeiDataAsync(null);
+        }
+
+        await InvokeAsync(StateHasChanged);
     }
 }
