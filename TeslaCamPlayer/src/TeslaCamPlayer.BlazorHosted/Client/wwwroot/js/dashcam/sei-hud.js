@@ -107,15 +107,13 @@
       throttlePct: clamp(throttleRaw, 0, opts.maxThrottlePct),
       autopilotState,
       gear: gear ?? "—",
-      frameSeqNo: pickNumber(raw, ["frame_seq_no", "frameSeqNo"], null),
       latitude: pickNumber(raw, ["latitude_deg", "latitudeDeg"], null),
       longitude: pickNumber(raw, ["longitude_deg", "longitudeDeg"], null),
       heading,
       accelX,
       accelY,
       accelZ,
-      accelMag,
-      version: pickNumber(raw, ["version"], null)
+      accelMag
     };
   }
 
@@ -182,11 +180,10 @@
   gap:10px;
 }
 
-.sei-row.row-primary { grid-template-columns: auto 1fr auto auto; }
+.sei-row.row-primary { grid-template-columns: auto 1fr auto; }
 .sei-row.row-signals { grid-template-columns: repeat(3, 1fr); }
 .sei-row.row-driver { grid-template-columns: repeat(2, 1fr); }
 .sei-row.row-location { grid-template-columns: repeat(4, 1fr); }
-.sei-row.row-meta { grid-template-columns: 1fr; }
 
 .sei-label {
   font-size:11px;
@@ -251,17 +248,6 @@
 .ap-badge.state-tacc { background:rgba(90,200,255,.16); border-color:rgba(140,210,255,.55); }
 .ap-badge.state-autosteer { background:rgba(90,220,255,.16); border-color:rgba(150,230,255,.55); }
 .ap-badge.state-self_driving { background:rgba(120,255,210,.16); border-color:rgba(140,255,220,.55); }
-
-.frame-seq {
-  text-align:right;
-  font-family:"SFMono-Regular",Menlo,Consolas,monospace;
-  color:#d5ddf3;
-}
-.frame-seq .value {
-  font-size:14px;
-  font-weight:700;
-  letter-spacing:.5px;
-}
 
 .state-pill {
   display:flex;
@@ -383,18 +369,6 @@
 }
 .accel-block .dim { opacity:.8; font-size:12px; }
 .accel-block .unit { opacity:.7; font-size:12px; }
-
-.meta-pill {
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:8px 12px;
-  border-radius:12px;
-  border:1px solid rgba(255,255,255,.12);
-  background:rgba(255,255,255,.05);
-  width:fit-content;
-}
-.meta-pill .value { font-weight:700; }
 `;
     document.head.appendChild(s);
   }
@@ -426,11 +400,7 @@
     ap.className = "ap-badge off";
     ap.innerHTML = `<span class="ap-dot"></span><div class="ap-text">${AUTOPILOT_LABELS.NONE}</div>`;
 
-    const frame = document.createElement("div");
-    frame.className = "frame-seq";
-    frame.innerHTML = `<div class="sei-label">Frame</div><div class="value">—</div>`;
-
-    rowPrimary.append(gear, speed, ap, frame);
+    rowPrimary.append(gear, speed, ap);
 
     // Signals row
     const rowSignals = document.createElement("div");
@@ -511,14 +481,7 @@
     rowLocation.append(latCard.cardEl, lonCard.cardEl, headingCard.cardEl, accelCard);
 
     // Metadata row
-    const rowMeta = document.createElement("div");
-    rowMeta.className = "sei-row row-meta";
-    const versionCard = document.createElement("div");
-    versionCard.className = "meta-pill";
-    versionCard.innerHTML = `<span class="sei-label">Version</span><span class="value">—</span>`;
-    rowMeta.append(versionCard);
-
-    card.append(rowPrimary, rowSignals, rowDriver, rowLocation, rowMeta);
+    card.append(rowPrimary, rowSignals, rowDriver, rowLocation);
     wrap.appendChild(card);
     root.appendChild(wrap);
 
@@ -529,7 +492,6 @@
       gearValue: gear.querySelector(".value"),
       apBadge: ap,
       apText: ap.querySelector(".ap-text"),
-      frameValue: frame.querySelector(".value"),
       leftState,
       rightState,
       brakeState,
@@ -543,8 +505,7 @@
       accelXValue: accelCard.querySelector(".vector-item.x .value"),
       accelYValue: accelCard.querySelector(".vector-item.y .value"),
       accelZValue: accelCard.querySelector(".vector-item.z .value"),
-      accelMagValue: accelCard.querySelector(".vector-item.mag .value"),
-      versionValue: versionCard.querySelector(".value")
+      accelMagValue: accelCard.querySelector(".vector-item.mag .value")
     };
   }
 
@@ -588,8 +549,6 @@
       hud.apBadge.classList.add(`state-${autopilotState.toLowerCase()}`);
       hud.apBadge.style.setProperty("--ap-dot", AUTOPILOT_COLORS[autopilotState] || AUTOPILOT_COLORS.NONE);
 
-      hud.frameValue.textContent = t.frameSeqNo != null ? t.frameSeqNo.toString() : "—";
-
       hud.leftState.cell.classList.toggle("active", t.left);
       hud.leftState.valueEl.textContent = t.left ? "On" : "Off";
       hud.rightState.cell.classList.toggle("active", t.right);
@@ -613,8 +572,6 @@
       hud.accelYValue.textContent = formatNumber(t.accelY, 2, "—");
       hud.accelZValue.textContent = formatNumber(t.accelZ, 2, "—");
       hud.accelMagValue.textContent = formatNumber(t.accelMag, 2, "—");
-
-      hud.versionValue.textContent = t.version != null ? t.version.toString() : "—";
     });
 
     return {
