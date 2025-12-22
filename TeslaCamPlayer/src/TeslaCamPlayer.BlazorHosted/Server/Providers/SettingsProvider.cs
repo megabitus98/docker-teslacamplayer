@@ -39,6 +39,28 @@ public class SettingsProvider : ISettingsProvider
             };
         }
 
+        // Read SPEED_UNIT environment variable
+        var speedUnitEnv = Environment.GetEnvironmentVariable("SPEED_UNIT");
+        if (!string.IsNullOrWhiteSpace(speedUnitEnv))
+        {
+            var normalized = speedUnitEnv.Trim().ToLowerInvariant();
+            settings.SpeedUnit = normalized switch
+            {
+                "kmh" => "kmh",
+                "km/h" => "kmh",
+                "kph" => "kmh",
+                "mph" => "mph",
+                "miles" => "mph",
+                _ => settings.SpeedUnit
+            };
+        }
+
+        // Ensure valid value (defensive programming)
+        if (settings.SpeedUnit != "kmh" && settings.SpeedUnit != "mph")
+        {
+            settings.SpeedUnit = "kmh";
+        }
+
         // Determine cache database path (fallback to prior CacheFilePath for backward compatibility)
         if (string.IsNullOrWhiteSpace(settings.CacheDatabasePath))
         {

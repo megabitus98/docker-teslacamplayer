@@ -9,12 +9,13 @@ services:
     environment:
       - TZ=Europe/Bucharest
       - ENABLE_DELETE=false # Enable delete functionality in the web UI
+      - SPEED_UNIT=kmh # Speed unit for SEI HUD telemetry (kmh or mph)
       - EXPORT_ROOT_PATH=/export
       - EXPORT_RETENTION_HOURS=0
     volumes:
       - appdata:/config
-      # - /Users/megabitus/Movies/TeslaCam:/media
-      - /Volumes/TeslaCam/TeslaCam:/media
+      - /Users/megabitus/Movies/TeslaCam:/media
+      # - /Volumes/TeslaCam/TeslaCam:/media
       - exportdata:/export
     ports:
       - 5500:5000

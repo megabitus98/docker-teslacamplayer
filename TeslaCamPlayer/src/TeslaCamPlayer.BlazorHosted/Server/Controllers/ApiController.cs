@@ -20,11 +20,13 @@ public class ApiController : ControllerBase
     private readonly ISettingsProvider _settingsProvider;
     private readonly string _rootFullPath;
     private readonly bool _enableDelete;
+    private readonly string _speedUnit;
 
     public ApiController(ISettingsProvider settingsProvider, IClipsService clipsService, IRefreshProgressService refreshProgressService, IExportService exportService)
     {
         _rootFullPath = Path.GetFullPath(settingsProvider.Settings.ClipsRootPath);
         _enableDelete = settingsProvider.Settings.EnableDelete;
+        _speedUnit = settingsProvider.Settings.SpeedUnit;
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
         _refreshProgressService = refreshProgressService;
@@ -44,7 +46,7 @@ public class ApiController : ControllerBase
 
     [HttpGet]
     public AppConfig GetConfig()
-        => new AppConfig { EnableDelete = _enableDelete };
+        => new AppConfig { EnableDelete = _enableDelete, SpeedUnit = _speedUnit };
 
     [HttpDelete]
     public IActionResult DeleteEvent(string path)

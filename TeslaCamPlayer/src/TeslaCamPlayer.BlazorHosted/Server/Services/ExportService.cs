@@ -368,7 +368,7 @@ public class ExportService : IExportService
 
                     if (seiMessages.Count > 0)
                     {
-                        var hudFilterBuilder = new SeiHudFilterBuilder();
+                        var hudFilterBuilder = new SeiHudFilterBuilder(_settingsProvider);
                         srtPath = Path.Combine(exportDir, $"{jobId}_sei.srt");
                         hudFilterBuilder.GenerateSeiSubtitleFile(seiMessages, 30.0, srtPath);
 

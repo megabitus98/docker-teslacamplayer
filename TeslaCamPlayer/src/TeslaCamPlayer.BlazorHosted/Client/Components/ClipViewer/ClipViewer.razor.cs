@@ -22,6 +22,9 @@ public partial class ClipViewer : ComponentBase, IDisposable
     public CameraFilterValues CameraFilter { get; set; } = new();
 
     [Parameter]
+    public string SpeedUnit { get; set; } = "kmh";
+
+    [Parameter]
     public bool IsExportMode { get; set; }
 
     protected override void OnInitialized()

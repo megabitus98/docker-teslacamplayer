@@ -6,6 +6,7 @@ public class Settings
     public string CacheFilePath { get; set; }
     public string CacheDatabasePath { get; set; }
     public bool EnableDelete { get; set; } = true;
+    public string SpeedUnit { get; set; } = "kmh";
     public string ExportRootPath { get; set; }
     public int ExportRetentionHours { get; set; } = 24;
     public int IndexingBatchSize { get; set; } = 1000;

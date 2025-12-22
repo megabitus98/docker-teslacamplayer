@@ -46,6 +46,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private TeslaCamPlayer.BlazorHosted.Client.Models.CameraFilterValues _cameraFilter = new();
     private RefreshStatus _refreshStatus = new();
     private bool _enableDelete = true;
+    private string _speedUnit = "kmh";
     private bool _isExportMode;
     private string _exportFormat = "mp4";
     private string _exportResolution = "original"; // or "1280x720", "1920x1080"
@@ -85,11 +86,13 @@ public partial class Index : ComponentBase, IAsyncDisposable
         {
             var config = await HttpClient.GetFromNewtonsoftJsonAsync<AppConfig>("Api/GetConfig");
             _enableDelete = config?.EnableDelete ?? true;
+            _speedUnit = config?.SpeedUnit ?? "kmh";
         }
         catch
         {
             // If config fetch fails, default to showing delete (backward compatibility)
             _enableDelete = true;
+            _speedUnit = "kmh";
         }
 
         await RefreshEventsAsync(false);

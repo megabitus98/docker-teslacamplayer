@@ -7,7 +7,7 @@
 
 (function () {
   const DEFAULTS = {
-    useMph: true,
+    useMph: false,
     maxThrottlePct: 100,
     maxSteerDeg: 540,
     zIndex: 9999
@@ -558,18 +558,24 @@
     return () => (stop = true);
   }
 
-  function mount({ videoEl, getTelemetry }) {
+  function mount({ videoEl, getTelemetry, useMph }) {
     injectStyles();
     const container = videoEl || videoEl?.parentElement || document.body;
     if (getComputedStyle(container).position === "static") {
       container.style.position = "relative";
     }
 
-    const hud = createHudDom(DEFAULTS);
+    // Merge user-provided options with defaults
+    const opts = {
+      ...DEFAULTS,
+      useMph: useMph !== undefined ? useMph : DEFAULTS.useMph
+    };
+
+    const hud = createHudDom(opts);
     container.appendChild(hud.root);
 
     const stop = rafLoop(() => {
-      const t = normalizeTelemetry(getTelemetry() || {}, DEFAULTS);
+      const t = normalizeTelemetry(getTelemetry() || {}, opts);
 
       hud.speedValue.textContent = Math.round(Math.max(0, t.speed || 0));
       hud.speedUnit.textContent = t.unit;

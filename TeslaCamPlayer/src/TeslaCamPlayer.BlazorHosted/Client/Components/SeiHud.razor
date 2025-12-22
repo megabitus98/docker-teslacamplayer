@@ -15,6 +15,9 @@
     [Parameter]
     public EventCallback<bool> IsVisibleChanged { get; set; }
 
+    [Parameter]
+    public string SpeedUnit { get; set; } = "kmh";
+
     private ElementReference _hudContainerRef;
     private IJSObjectReference _hudModule;
     private IJSObjectReference _hudInstance;
@@ -35,7 +38,7 @@
 
                 // Initialize HUD instance
                 _hudInstance = await _hudModule.InvokeAsync<IJSObjectReference>(
-                    "initializeSeiHud", _hudContainerRef, _objRef);
+                    "initializeSeiHud", _hudContainerRef, _objRef, SpeedUnit);
             }
             catch (Exception ex)
             {

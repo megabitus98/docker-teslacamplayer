@@ -4,11 +4,19 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 
 namespace TeslaCamPlayer.BlazorHosted.Server.Services;
 
 public class SeiHudFilterBuilder
 {
+    private readonly ISettingsProvider _settingsProvider;
+
+    public SeiHudFilterBuilder(ISettingsProvider settingsProvider)
+    {
+        _settingsProvider = settingsProvider;
+    }
+
     public string GenerateSeiSubtitleFile(
         List<SeiMetadata> messages,
         double frameRate,
@@ -37,8 +45,12 @@ public class SeiHudFilterBuilder
             srt.AppendLine($"{FormatSrtTime(startTime)} --> {FormatSrtTime(endTime)}");
 
             // Format telemetry data
+            var speedUnit = _settingsProvider.Settings.SpeedUnit;
+            var useMph = speedUnit == "mph";
             var speedMph = sei.VehicleSpeedMps * 2.23694;
-            srt.AppendLine($"Speed: {speedMph:F1} mph");
+            var speed = useMph ? speedMph : speedMph * 1.60934;
+            var unit = useMph ? "mph" : "km/h";
+            srt.AppendLine($"Speed: {speed:F1} {unit}");
             srt.AppendLine($"Gear: {FormatGear(sei.GearState)}");
 
             if (sei.AutopilotState != SeiMetadata.Types.AutopilotState.None)

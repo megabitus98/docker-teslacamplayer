@@ -140,8 +140,12 @@
     </MudDrawer>
     @* Export settings moved to a pop-out dialog opened via the toolbar button *@
     <MudMainContent Class="viewer-container">
-        <ClipViewer @ref="_clipViewer" PreviousButtonClicked="PreviousButtonClicked"
-            NextButtonClicked="NextButtonClicked" CameraFilter="_cameraFilter" IsExportMode="@_isExportMode" />
+        <ClipViewer @ref="_clipViewer"
+            SpeedUnit="@_speedUnit"
+            PreviousButtonClicked="PreviousButtonClicked"
+            NextButtonClicked="NextButtonClicked"
+            CameraFilter="_cameraFilter"
+            IsExportMode="@_isExportMode" />
     </MudMainContent>
 </MudLayout>
 
