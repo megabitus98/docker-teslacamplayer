@@ -34,13 +34,10 @@
             </button>
         }
 
-        @if (!IsExportMode)
-        {
-            <SeiHud @ref="_seiHudRef"
-                    SpeedUnit="@SpeedUnit"
-                    IsVisible="@_showSeiHud"
-                    IsVisibleChanged="@OnSeiHudVisibilityChanged" />
-        }
+        <SeiHud @ref="_seiHudRef"
+                SpeedUnit="@SpeedUnit"
+                IsVisible="@_showSeiHud"
+                IsVisibleChanged="@OnSeiHudVisibilityChanged" />
     </div>
     <div class="controls">
         @if (IsExportMode)

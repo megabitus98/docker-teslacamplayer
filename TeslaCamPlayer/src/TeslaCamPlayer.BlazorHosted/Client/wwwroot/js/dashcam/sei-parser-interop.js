@@ -3,6 +3,7 @@ let SeiMetadata = null;
 let enumFields = null;
 const DEFAULT_PROTO_URL = new URL("./dashcam.proto", import.meta.url).href;
 const parsedCache = new Map();
+const DEFAULT_FRAME_DURATION_MS = 33.333; // ~30fps fallback
 const PROTO_TEXT = `
 syntax = "proto3";
 
@@ -41,6 +42,62 @@ message SeiMetadata {
   double linear_acceleration_mps2_z = 16;
 }
 `;
+
+function buildFrameTimeline(frames, config) {
+    const frameCount = frames?.length ?? 0;
+    const durations = Array.isArray(config?.durations) ? config.durations : [];
+    const fallbackDuration = durations[0] || DEFAULT_FRAME_DURATION_MS;
+
+    const startsMs = new Array(frameCount);
+    let acc = 0;
+
+    for (let i = 0; i < frameCount; i++) {
+        startsMs[i] = acc;
+        const duration = durations.length
+            ? durations[Math.min(i, durations.length - 1)] || fallbackDuration
+            : fallbackDuration;
+        acc += duration;
+    }
+
+    return {
+        startsMs,
+        totalMs: acc,
+        defaultDurationMs: fallbackDuration
+    };
+}
+
+function findFrameIndexForMs(timeline, targetMs) {
+    const starts = timeline?.startsMs;
+    if (!starts || !starts.length) {
+        return null;
+    }
+
+    if (targetMs <= starts[0]) {
+        return 0;
+    }
+
+    let low = 0;
+    let high = starts.length - 1;
+    while (low <= high) {
+        const mid = (low + high) >>> 1;
+        const midStart = starts[mid];
+        const nextStart = mid + 1 < starts.length ? starts[mid + 1] : Number.POSITIVE_INFINITY;
+
+        if (targetMs < midStart) {
+            high = mid - 1;
+            continue;
+        }
+
+        if (targetMs >= nextStart) {
+            low = mid + 1;
+            continue;
+        }
+
+        return mid;
+    }
+
+    return starts.length - 1;
+}
 
 async function ensureInitialized(protoPath = null) {
     if (SeiMetadata) return;
@@ -82,6 +139,8 @@ export async function parseVideoSei(arrayBuffer) {
 
     const mp4 = new window.DashcamMP4(arrayBuffer);
     const frames = mp4.parseFrames(SeiMetadata);
+    const config = mp4.getConfig();
+    const timeline = buildFrameTimeline(frames, config);
 
     // Check if any frames have SEI data
     const hasValidSei = frames.some(f => f.sei != null);
@@ -91,7 +150,8 @@ export async function parseVideoSei(arrayBuffer) {
 
     return {
         frames: frames,
-        config: mp4.getConfig()
+        config,
+        timeline
     };
 }
 
@@ -120,13 +180,16 @@ export function getSeiForTime(handle, timeSeconds) {
         return null;
     }
 
-    const config = parsedData.config;
-    // Calculate frame index based on frame durations
-    const frameDurationMs = config.durations && config.durations[0]
-        ? config.durations[0]
-        : 33.333; // Default to 30fps
+    const targetMs = timeSeconds * 1000;
+    const timeline = parsedData.timeline;
 
-    const frameIndex = Math.floor((timeSeconds * 1000) / frameDurationMs);
+    let frameIndex = findFrameIndexForMs(timeline, targetMs);
+    if (frameIndex === null || frameIndex === undefined) {
+        const fallbackDuration = timeline?.defaultDurationMs
+            ?? parsedData.config?.durations?.[0]
+            ?? DEFAULT_FRAME_DURATION_MS;
+        frameIndex = Math.floor(targetMs / fallbackDuration);
+    }
 
     if (frameIndex >= 0 && frameIndex < parsedData.frames.length) {
         return parsedData.frames[frameIndex].sei;
