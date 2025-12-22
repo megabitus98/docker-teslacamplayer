@@ -31,10 +31,10 @@
 `;
 
   const STEERING_WHEEL_SVG = `
-<circle cx="12" cy="12" r="8" stroke="white" stroke-width="1.4"/>
-<path d="M6.8 9.8 H17.2" stroke="white" stroke-width="2" stroke-linecap="round"/>
-<path d="M12 9.8 V16.8" stroke="white" stroke-width="2" stroke-linecap="round"/>
-<circle cx="12" cy="12" r="1.8" stroke="white" stroke-width="1.4"/>
+<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.4"/>
+<path d="M6.8 9.8 H17.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+<path d="M12 9.8 V16.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+<circle cx="12" cy="12" r="1.8" stroke="currentColor" stroke-width="1.4"/>
 `;
 
   const clamp = (n, min, max) =>
@@ -132,125 +132,187 @@
     s.textContent = `
 .sei-hud-root {
   position:absolute;
-  inset:0;
+  top:0;
+  left:0;
   pointer-events:none;
   z-index:var(--sei-hud-z);
   font-family: system-ui,-apple-system,Segoe UI;
   color:rgba(255,255,255,.95);
+  display:flex;
+  justify-content:center;
+  align-items:flex-start;
+  padding: clamp(8px, 2vw, 12px);
+  box-sizing:border-box;
+  width: 100%;
 }
 
 .sei-hud-root.sei-hud-hidden {
   display:none;
 }
 
-.sei-hud-wrap {
+.sei-hud-bar {
   display:flex;
-  justify-content:center;
-  padding:12px;
-}
-
-.sei-hud-card {
-  padding: 6px 10px 8px;
-  border-radius: 18px;
+  align-items:center;
+  gap: 6px;
+  padding: 7px clamp(12px, 1.8vw, 14px);  /* was 6px clamp(10px...) */
+  min-height: 52px;
+  height: clamp(54px, 6.4vw, 58px);       /* optional: +2px */
+  width: fit-content;                 /* hug content */
+  max-width: min(84vw, 600px);        /* still responsive */
+  min-width: 0;                       /* remove forced width */
   backdrop-filter: blur(14px);
-  background: rgba(10,10,12,.38);
-  border: 1px solid rgba(255,255,255,.14);
-  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+  background: rgba(0,0,0,.28);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 8px 20px rgba(0,0,0,.22);
+  border-radius: 999px;
+  pointer-events: none;
 }
 
-.sei-hud-grid {
-  display:grid;
-  grid-template-columns: auto 1fr 32px 3ch 32px 1fr auto;
-  grid-template-rows: 1fr 1fr;
-  grid-template-areas:
-    "gear  . left  speed right . wheel"
-    "brake . .     .     .     . throttle";
-  column-gap:8px;
-  align-items:center;
-}
-
-.sei-hud-speed {
+.sei-hud-cluster {
   display:flex;
-  flex-direction:column;
   align-items:center;
-  line-height:1;
-  transform: translateY(16px);
-}
-.sei-hud-speed .val {
-  font-size:28px;
-  font-weight:800;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-}
-.sei-hud-speed .unit {
-  font-size:12px;
-  opacity:.8;
-  margin-top:4px;
+  gap: 7px;
 }
 
-.sei-hud-signal {
-  width:32px;
-  height:24px;
+/* prevent double-box on blinkers */
+.sei-hud-chip.blinker-chip{
+  border: none;          /* removes the extra square border */
+  background: transparent;
+  padding: 0;            /* keeps geometry predictable */
+}
+
+.sei-hud-cluster.left,
+.sei-hud-cluster.right {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-width: clamp(72px, 16vw, 96px);
+}
+
+.sei-hud-cluster.center {
+  flex: 0 0 auto;          /* key */
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.sei-hud-inner {
+  flex: 0 0 auto;          /* key */
+  display: flex;
+  justify-content: center;
+}
+
+.sei-hud-inner-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+}
+
+.sei-hud-chip {
+  min-width: 44px;
+  min-height: 44px;
   display:grid;
   place-items:center;
-  border-radius:10px;
-  opacity:.4;
-  border:1px solid rgba(255,255,255,.15);
-  transform: translateY(16px);
+  border-radius: 16px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+  color: inherit;
+  box-sizing: border-box;
 }
-.sei-hud-signal.active {
+
+.gear-chip {
+  font-size: 13px;
+  font-weight: 800;
+  background: rgba(0,0,0,.32);
+  border-color: rgba(255,255,255,.12);
+}
+
+.blinker-chip {
+  width: 44px;
+  height: 44px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  opacity: .55;
+  background: transparent;
+}
+
+.blinker-chip.active {
+  opacity: 1;
+}
+
+.blinker-chip::before {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  content:"";
+  position:absolute;
+  width: 52px;
+  height: 28px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.16);
+}
+
+.blinker-chip.active::before {
+  background: rgba(120,255,120,.16);
+  border-color: rgba(120,255,120,.32);
   animation: blinker-pulse 1s ease-in-out infinite;
 }
 
 @keyframes blinker-pulse {
   0%, 100% {
-    opacity:1;
-    background:rgba(120,255,120,.18);
-    border-color:rgba(120,255,120,.45);
+    background: rgba(120,255,120,.16);
+    border-color: rgba(120,255,120,.36);
   }
   50% {
-    opacity:.3;
-    background:rgba(120,255,120,.05);
-    border-color:rgba(120,255,120,.2);
+    background: rgba(120,255,120,.04);
+    border-color: rgba(120,255,120,.18);
   }
 }
 
-.sei-hud-wheel {
-  width:32px;
-  height:32px;
-  border-radius:50%;
-  display:grid;
-  place-items:center;
-  border:1px solid rgba(255,255,255,.18);
-}
-.sei-hud-wheel svg {
-  width:26px;
-  height:26px;
-  transform:rotate(var(--sei-wheel-rot,0deg));
+.wheel-chip {
+  width: 44px;
+  height: 44px;
+  padding: 0;
 }
 
-.sei-hud-pedal {
-  width:32px;
-  height:32px;
-  border-radius:50%;
-  position:relative;
-  border:2px solid rgba(255,255,255,.25);
-  overflow:hidden;
+.wheel-chip svg {
+  width: 28px;
+  height: 28px;
+  transform: rotate(var(--sei-wheel-rot, 0deg));
 }
-.sei-hud-pedal::before {
-  content:"";
+
+.pedal-chip {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05);
+}
+
+.pedal-chip::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 12px;
+  background: rgba(0,0,0,.42);
+}
+
+.pedal-chip .fill {
   position:absolute;
-  inset:4px;
-  border-radius:50%;
-  background:rgba(0,0,0,.4);
-}
-.sei-hud-pedal .fill {
-  position:absolute;
-  inset:4px;
+  inset:6px;
   overflow:hidden;
-  border-radius:50%;
+  border-radius:12px;
 }
-.sei-hud-pedal .fill i {
+
+.pedal-chip .fill i {
   position:absolute;
   bottom:0;
   left:0;
@@ -258,42 +320,64 @@
   height:var(--fill);
   background:var(--c);
 }
-.sei-hud-pedal.throttle { --c:rgba(120,255,120,.7); }
-.sei-hud-pedal.brake { --c:rgba(255,90,90,.75); }
-.sei-hud-pedal svg {
+
+.pedal-chip.throttle { --c:rgba(120,255,120,.7); }
+.pedal-chip.brake { --c:rgba(255,90,90,.75); }
+
+.pedal-chip svg {
   position:absolute;
   z-index:2;
-  stroke:rgba(136,136,136,.9);
+  stroke:rgba(200,200,200,.88);
   fill:none;
 }
 
-.sei-hud-gear {
-  font-size:12px;
-  font-weight:800;
-  padding:6px 12px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.14);
+.speed-val {
+  font-size: clamp(26px, 3.2vw, 32px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  line-height: 1;
 }
 
-.sei-hud-ap-status {
-  margin-top:6px;
-  text-align:center;
-  font-size:13px;
-  font-weight:600;
-  letter-spacing:.3px;
-  color:rgb(90,160,255);
-  opacity:0;
-  max-height:0;
-  transform:translateY(-4px);
-  transition:
-    opacity .25s ease,
-    transform .25s ease,
-    max-height .25s ease;
+.unit-row {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap: 2px;
 }
-.sei-hud-ap-status.active {
-  opacity:1;
-  max-height:24px;
-  transform:translateY(0);
+
+.unit-label {
+  font-size: 12px;
+  opacity: .78;
+}
+
+.wheel-chip {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  transition: background .2s ease, border-color .2s ease, color .2s ease;
+}
+
+.wheel-chip svg {
+  width: 28px;
+  height: 28px;
+  transform: rotate(var(--sei-wheel-rot, 0deg));
+   /* keep stroke tied to computed color */
+  stroke: currentColor;
+  transition: stroke .2s ease;
+}
+
+.wheel-chip.cruise {
+  background: rgba(90,160,255,.12);
+  border-color: rgba(90,160,255,.25);
+}
+
+.wheel-chip.autopilot {
+  color: #40C4FF;
+}
+
+.wheel-chip.autopilot svg {
+  stroke: rgb(130,190,255);
 }
 `;
     document.head.appendChild(s);
@@ -304,87 +388,92 @@
     root.className = "sei-hud-root";
     root.style.setProperty("--sei-hud-z", opts.zIndex);
 
-    const wrap = document.createElement("div");
-    wrap.className = "sei-hud-wrap";
+    const bar = document.createElement("div");
+    bar.className = "sei-hud-bar";
 
-    const card = document.createElement("div");
-    card.className = "sei-hud-card";
+    // Blinkers as edge chips
+    const leftSig = document.createElement("div");
+    leftSig.className = "sei-hud-chip blinker-chip left";
+    leftSig.textContent = "◀";
 
-    // Grid container
-    const grid = document.createElement("div");
-    grid.className = "sei-hud-grid";
+    const rightSig = document.createElement("div");
+    rightSig.className = "sei-hud-chip blinker-chip right";
+    rightSig.textContent = "▶";
 
-    // Gear indicator
+    // Left cluster: gear + brake pedal
+    const leftCluster = document.createElement("div");
+    leftCluster.className = "sei-hud-cluster left";
+
     const gear = document.createElement("div");
-    gear.className = "sei-hud-gear";
-    gear.style.gridArea = "gear";
+    gear.className = "sei-hud-chip gear-chip";
     gear.textContent = "—";
 
-    // Brake pedal (circular with fill)
     const brake = document.createElement("div");
-    brake.className = "sei-hud-pedal brake";
-    brake.style.gridArea = "brake";
+    brake.className = "sei-hud-chip pedal-chip brake";
     brake.innerHTML = `
       <span class="fill"><i></i></span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${BRAKE_PEDAL_SVG}</svg>
     `;
 
-    // Left blinker
-    const leftSig = document.createElement("div");
-    leftSig.className = "sei-hud-signal left";
-    leftSig.style.gridArea = "left";
-    leftSig.textContent = "◀";
+    leftCluster.append(gear, brake);
 
-    // Speed display
-    const speedBox = document.createElement("div");
-    speedBox.className = "sei-hud-speed";
-    speedBox.style.gridArea = "speed";
-    speedBox.innerHTML = `
-      <div class="val">0</div>
-      <div class="unit">${opts.useMph ? "mph" : "km/h"}</div>
-    `;
+    // Center cluster: speed, unit + autopilot chip
+    const centerCluster = document.createElement("div");
+    centerCluster.className = "sei-hud-cluster center";
 
-    // Right blinker
-    const rightSig = document.createElement("div");
-    rightSig.className = "sei-hud-signal right";
-    rightSig.style.gridArea = "right";
-    rightSig.textContent = "▶";
+    const speedVal = document.createElement("div");
+    speedVal.className = "speed-val";
+    speedVal.textContent = "0";
 
-    // Steering wheel
+    const unitRow = document.createElement("div");
+    unitRow.className = "unit-row";
+
+    const unitLabel = document.createElement("span");
+    unitLabel.className = "unit-label";
+    unitLabel.textContent = opts.useMph ? "mph" : "km/h";
+
+    unitRow.append(unitLabel);
+    centerCluster.append(speedVal, unitRow);
+
+    // Right cluster: steering + throttle pedal
+    const rightCluster = document.createElement("div");
+    rightCluster.className = "sei-hud-cluster right";
+
     const wheel = document.createElement("div");
-    wheel.className = "sei-hud-wheel";
-    wheel.style.gridArea = "wheel";
+    wheel.className = "sei-hud-chip wheel-chip";
     wheel.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="steer-wheel-icon">${STEERING_WHEEL_SVG}</svg>`;
 
-    // Throttle pedal (circular with fill)
     const throttle = document.createElement("div");
-    throttle.className = "sei-hud-pedal throttle";
-    throttle.style.gridArea = "throttle";
+    throttle.className = "sei-hud-chip pedal-chip throttle";
     throttle.innerHTML = `
       <span class="fill"><i></i></span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${THROTTLE_PEDAL_SVG}</svg>
     `;
 
-    // Autopilot status (below grid)
-    const apStatus = document.createElement("div");
-    apStatus.className = "sei-hud-ap-status";
+    rightCluster.append(wheel, throttle);
 
-    grid.append(gear, brake, leftSig, speedBox, rightSig, wheel, throttle);
-    card.append(grid, apStatus);
-    wrap.appendChild(card);
-    root.appendChild(wrap);
+    const inner = document.createElement("div");
+    inner.className = "sei-hud-inner";
+
+    const innerRow = document.createElement("div");
+    innerRow.className = "sei-hud-inner-row";
+    innerRow.append(leftCluster, centerCluster, rightCluster);
+    inner.appendChild(innerRow);
+
+    bar.append(leftSig, inner, rightSig);
+    root.appendChild(bar);
 
     return {
       root,
-      speedVal: speedBox.querySelector(".val"),
+      speedVal,
+      unitLabel,
       leftSig,
       rightSig,
       wheel,
       wheelSvg: wheel.querySelector(".steer-wheel-icon"),
       throttlePedal: throttle,
       brakePedal: brake,
-      gear,
-      apStatus
+      gear
     };
   }
 
@@ -474,19 +563,12 @@
       // Gear
       hud.gear.textContent = t.gear || "—";
 
-      // Autopilot status with simplified labels
-      const autopilotState = t.autopilotState || "NONE";
-      const isAP = autopilotState !== "NONE" && autopilotState !== "OFF";
-      hud.apStatus.classList.toggle("active", isAP);
-      if (isAP) {
-        const apLabels = {
-          "TACC": "Traffic-Aware Cruise",
-          "AUTOSTEER": "Autopilot",
-          "SELF_DRIVING": "Full Self-Driving",
-          "FSD": "Full Self-Driving"
-        };
-        hud.apStatus.textContent = apLabels[autopilotState] || "Autopilot";
-      }
+      // Autopilot/Cruise indicator on steering wheel
+      const autopilotState = (t.autopilotState || "NONE").toUpperCase();
+      const isCruise = autopilotState === "TACC";
+      const isAutopilot = autopilotState === "AUTOSTEER" || autopilotState === "SELF_DRIVING" || autopilotState === "FSD" || autopilotState === "AUTOPILOT";
+      hud.wheel.classList.toggle("cruise", isCruise);
+      hud.wheel.classList.toggle("autopilot", isAutopilot);
     });
 
     return {

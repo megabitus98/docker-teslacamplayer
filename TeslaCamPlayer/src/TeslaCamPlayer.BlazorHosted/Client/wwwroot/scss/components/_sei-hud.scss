@@ -4,10 +4,12 @@
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    padding: 12px;
-    z-index: 100;
+    padding: clamp(8px, 1.6vw, 14px);
+    z-index: 140;
     pointer-events: none;
     transition: opacity 0.3s ease;
+    box-sizing: border-box;
+    gap: 8px;
 
     &.hidden {
         opacity: 0;
@@ -23,6 +25,6 @@
     position: relative;
 
     .sei-hud-root {
-        z-index: 100 !important;
+        z-index: 160 !important;
     }
 }
