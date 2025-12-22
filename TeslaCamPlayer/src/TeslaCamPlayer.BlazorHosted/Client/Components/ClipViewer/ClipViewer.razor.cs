@@ -28,7 +28,7 @@ public partial class ClipViewer : ComponentBase, IDisposable
     {
         _setVideoTimeDebounceTimer = new(500);
         _setVideoTimeDebounceTimer.Elapsed += ScrubVideoDebounceTick;
-        _ = InitializeSeiParsingAsync();
+        _seiInitTask = InitializeSeiParsingAsync();
     }
 
     protected override void OnAfterRender(bool firstRender)

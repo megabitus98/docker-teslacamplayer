@@ -25,6 +25,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <Content Update="wwwroot\js\dashcam\dashcam.proto"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Folder Include="wwwroot\css\" />
     </ItemGroup>
 

@@ -11,18 +11,24 @@ public partial class ClipViewer
     private bool _showSeiHud = true;
     private bool _seiMetadataAvailable = false;
     private IJSObjectReference _seiParserModule;
-    private object _currentVideoSeiFrames;
-    private Dictionary<string, object> _seiCache = new();
+    private string _currentSeiHandle;
+    private Dictionary<string, string> _seiCache = new();
+    private Task _seiInitTask = Task.CompletedTask;
 
     private async Task InitializeSeiParsingAsync()
     {
+        if (_seiParserModule != null)
+        {
+            return;
+        }
+
         try
         {
             _seiParserModule = await JsRuntime.InvokeAsync<IJSObjectReference>(
                 "import", "./js/dashcam/sei-parser-interop.js");
 
             // Initialize protobuf schema
-            await _seiParserModule.InvokeVoidAsync("initializeProtobuf", "/js/dashcam/dashcam.proto");
+            await _seiParserModule.InvokeVoidAsync("initializeProtobuf");
 
             Console.WriteLine("SEI parsing initialized successfully");
         }
@@ -34,7 +40,14 @@ public partial class ClipViewer
 
     private async Task ParseVideoSeiMetadataAsync(string videoFilePath)
     {
-        if (_seiParserModule == null || string.IsNullOrEmpty(videoFilePath))
+        if (string.IsNullOrEmpty(videoFilePath))
+        {
+            return;
+        }
+
+        await _seiInitTask;
+
+        if (_seiParserModule == null)
         {
             return;
         }
@@ -42,7 +55,7 @@ public partial class ClipViewer
         // Check cache first
         if (_seiCache.TryGetValue(videoFilePath, out var cached))
         {
-            _currentVideoSeiFrames = cached;
+            _currentSeiHandle = cached;
             _seiMetadataAvailable = true;
             await InvokeAsync(StateHasChanged);
             return;
@@ -50,17 +63,13 @@ public partial class ClipViewer
 
         try
         {
-            // Fetch video file as ArrayBuffer via helper function
-            var arrayBuffer = await JsRuntime.InvokeAsync<IJSObjectReference>(
-                "fetchVideoAsArrayBuffer", videoFilePath);
-
-            // Parse SEI metadata
-            var result = await _seiParserModule.InvokeAsync<object>(
-                "parseVideoSei", arrayBuffer);
+            // Parse SEI metadata directly in JS (handles fetch + decode)
+            var result = await _seiParserModule.InvokeAsync<string>(
+                "parseVideoSeiFromUrl", videoFilePath);
 
             if (result != null)
             {
-                _currentVideoSeiFrames = result;
+                _currentSeiHandle = result;
                 _seiCache[videoFilePath] = result;
                 _seiMetadataAvailable = true;
                 await InvokeAsync(StateHasChanged);
@@ -82,7 +91,7 @@ public partial class ClipViewer
 
     private async Task UpdateHudWithCurrentFrameAsync(double currentTimeSeconds)
     {
-        if (_seiHudRef == null || _currentVideoSeiFrames == null || !_showSeiHud)
+        if (_seiHudRef == null || string.IsNullOrEmpty(_currentSeiHandle) || !_showSeiHud)
         {
             return;
         }
@@ -91,7 +100,7 @@ public partial class ClipViewer
         {
             // Get SEI data for current frame based on time
             var seiData = await _seiParserModule.InvokeAsync<object>(
-                "getSeiForTime", _currentVideoSeiFrames, currentTimeSeconds);
+                "getSeiForTime", _currentSeiHandle, currentTimeSeconds);
 
             if (seiData != null)
             {

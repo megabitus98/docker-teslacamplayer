@@ -1,13 +1,72 @@
 // ES6 module for Blazor JS interop - SEI Parser
 let SeiMetadata = null;
 let enumFields = null;
+const DEFAULT_PROTO_URL = new URL("./dashcam.proto", import.meta.url).href;
+const parsedCache = new Map();
+const PROTO_TEXT = `
+syntax = "proto3";
+
+// SEI (Supplemental Enhancement Information) metadata embedded in Tesla dashcam video streams.
+message SeiMetadata {
+  uint32 version = 1;
+
+  enum Gear {
+    GEAR_PARK = 0;
+    GEAR_DRIVE = 1;
+    GEAR_REVERSE = 2;
+    GEAR_NEUTRAL = 3;
+  }
+  Gear gear_state = 2;
+
+  uint64 frame_seq_no = 3;
+  float vehicle_speed_mps = 4;
+  float accelerator_pedal_position = 5;
+  float steering_wheel_angle = 6;
+  bool blinker_on_left = 7;
+  bool blinker_on_right = 8;
+  bool brake_applied = 9;
+
+  enum AutopilotState {
+    NONE = 0;
+    SELF_DRIVING = 1;
+    AUTOSTEER = 2;
+    TACC = 3;
+  }
+  AutopilotState autopilot_state = 10;
+  double latitude_deg = 11;
+  double longitude_deg = 12;
+  double heading_deg = 13;
+  double linear_acceleration_mps2_x = 14;
+  double linear_acceleration_mps2_y = 15;
+  double linear_acceleration_mps2_z = 16;
+}
+`;
+
+async function ensureInitialized(protoPath = null) {
+    if (SeiMetadata) return;
+    await initializeProtobuf(protoPath);
+}
 
 export async function initializeProtobuf(protoPath) {
     if (SeiMetadata) return;
 
-    const response = await fetch(protoPath);
-    const protoText = await response.text();
-    const root = protobuf.parse(protoText).root;
+    let protoText = PROTO_TEXT;
+    if (protoPath) {
+        try {
+            const response = await fetch(protoPath);
+            if (response.ok) {
+                protoText = await response.text();
+            }
+        } catch {
+            // fallback to embedded text
+        }
+    }
+
+    const proto = (globalThis.protobuf || window?.protobuf);
+    if (!proto) {
+        throw new Error("protobufjs not loaded");
+    }
+    const root = proto.parse(protoText).root;
 
     SeiMetadata = root.lookupType('SeiMetadata');
     enumFields = {
@@ -19,9 +78,7 @@ export async function initializeProtobuf(protoPath) {
 }
 
 export async function parseVideoSei(arrayBuffer) {
-    if (!SeiMetadata) {
-        throw new Error('Protobuf not initialized - call initializeProtobuf first');
-    }
+    await ensureInitialized();
 
     const mp4 = new window.DashcamMP4(arrayBuffer);
     const frames = mp4.parseFrames(SeiMetadata);
@@ -38,7 +95,27 @@ export async function parseVideoSei(arrayBuffer) {
     };
 }
 
-export function getSeiForTime(parsedData, timeSeconds) {
+export async function parseVideoSeiFromUrl(videoUrl) {
+    await ensureInitialized();
+
+    if (parsedCache.has(videoUrl)) {
+        return videoUrl;
+    }
+
+    const response = await fetch(videoUrl);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch video for SEI parsing (${response.status})`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    const parsed = await parseVideoSei(buffer);
+    if (!parsed) return null;
+    parsedCache.set(videoUrl, parsed);
+    return videoUrl;
+}
+
+export function getSeiForTime(handle, timeSeconds) {
+    const parsedData = parsedCache.get(handle);
     if (!parsedData || !parsedData.frames) {
         return null;
     }

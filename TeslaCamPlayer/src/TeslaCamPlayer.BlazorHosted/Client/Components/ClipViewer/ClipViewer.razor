@@ -34,7 +34,7 @@
             </button>
         }
 
-        @if (!IsExportMode && _seiMetadataAvailable)
+        @if (!IsExportMode)
         {
             <SeiHud @ref="_seiHudRef"
                     IsVisible="@_showSeiHud"
@@ -65,17 +65,14 @@
                                OnClick="@ToggleGridMode"
                                Class="grid-mode-toggle" />
             </MudTooltip>
-            @if (_seiMetadataAvailable)
-            {
-                <MudTooltip Text="@(_showSeiHud ? "Hide telemetry HUD" : "Show telemetry HUD")">
-                    <MudIconButton Icon="@Icons.Material.Filled.Sensors"
-                                   Size="Size.Medium"
-                                   Variant="Variant.Outlined"
-                                   Color="@(_showSeiHud ? Color.Primary : Color.Default)"
-                                   AriaLabel="@(_showSeiHud ? "Hide HUD" : "Show HUD")"
-                                   OnClick="@ToggleSeiHud" />
-                </MudTooltip>
-            }
+            <MudTooltip Text="@(_showSeiHud ? "Hide telemetry HUD" : "Show telemetry HUD")">
+                <MudIconButton Icon="@Icons.Material.Filled.Sensors"
+                               Size="Size.Medium"
+                               Variant="Variant.Outlined"
+                               Color="@(_showSeiHud ? Color.Primary : Color.Default)"
+                               AriaLabel="@(_showSeiHud ? "Hide HUD" : "Show HUD")"
+                               OnClick="@ToggleSeiHud" />
+            </MudTooltip>
             <MudBadge Content="@(_playbackSpeed != 1.0 ? $"{_playbackSpeed:0.##}x" : null)"
                       Visible="@(_playbackSpeed != 1.0)"
                       Color="Color.Secondary"
