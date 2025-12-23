@@ -27,6 +27,9 @@ CHIP_GAP_WIDE = 14
 SPEED_BLOCK_HALF_W = 60
 SPEED_BLOCK_HALF_H = 28
 
+# Icon supersampling for higher quality (2x = better quality, 4x = best quality but slower)
+ICON_SUPERSAMPLE = 2
+
 BLINKER_COLOR = (120, 255, 140, 220)  # Green
 BRAKE_COLOR = (255, 90, 90, 230)  # Red
 THROTTLE_COLOR = (120, 255, 120, 220)  # Green
@@ -230,9 +233,14 @@ def draw_blinker_chip(draw, x, y, active, direction='left', pulse=1.0):
 
     draw_chip_background(draw, box, fill=base_fill, outline=base_outline, outline_width=2)
 
-    cx = x + CHIP_SIZE / 2
-    cy = y + CHIP_SIZE / 2
-    arrow = 14
+    # Render arrow at higher resolution for smoother edges
+    ss_size = CHIP_SIZE * ICON_SUPERSAMPLE
+    arrow_img = Image.new('RGBA', (ss_size, ss_size), (0, 0, 0, 0))
+    arrow_draw = ImageDraw.Draw(arrow_img)
+
+    cx = ss_size / 2
+    cy = ss_size / 2
+    arrow = 14 * ICON_SUPERSAMPLE
 
     if direction == 'left':
         points = [
@@ -249,38 +257,68 @@ def draw_blinker_chip(draw, x, y, active, direction='left', pulse=1.0):
 
     arrow_base = (210, 210, 210, 170)
     arrow_color = lerp_color(arrow_base, BLINKER_COLOR, 0.65 + 0.35 * pulse) if active else arrow_base
-    draw.polygon(points, fill=arrow_color)
+    arrow_draw.polygon(points, fill=arrow_color)
+
+    # Scale down to target size with high-quality resampling
+    arrow_img = arrow_img.resize((CHIP_SIZE, CHIP_SIZE), Image.LANCZOS)
+    draw._image.paste(arrow_img, (x, y), arrow_img)
 
 def draw_brake_icon(draw, center, size, color):
-    cx, cy = center
-    scale = size / 24.0
+    """Draw brake pedal icon with supersampling for better quality"""
+    # Render at higher resolution
+    ss_factor = ICON_SUPERSAMPLE
+    ss_size = int(size * ss_factor)
+    icon_img = Image.new('RGBA', (ss_size, ss_size), (0, 0, 0, 0))
+    icon_draw = ImageDraw.Draw(icon_img)
+
+    cx = cy = ss_size / 2
+    scale = ss_size / 24.0
     outline_points = [(6, 7), (18, 7), (20, 16), (12, 19), (4, 16)]
     scaled_outline = [(cx + (px - 12) * scale, cy + (py - 12) * scale) for px, py in outline_points]
 
-    draw.line(scaled_outline + [scaled_outline[0]], fill=color, width=max(2, int(2 * scale)))
+    icon_draw.line(scaled_outline + [scaled_outline[0]], fill=color, width=max(2, int(2 * scale)))
 
     for x in [8, 10, 12, 14, 16]:
         x_pos = cx + (x - 12) * scale
-        draw.line(
+        icon_draw.line(
             [(x_pos, cy + (9 - 12) * scale), (x_pos, cy + (14 - 12) * scale)],
             fill=color,
             width=max(1, int(1.4 * scale))
         )
 
+    # Scale down and composite
+    icon_img = icon_img.resize((int(size), int(size)), Image.LANCZOS)
+    offset_x = int(center[0] - size / 2)
+    offset_y = int(center[1] - size / 2)
+    draw._image.paste(icon_img, (offset_x, offset_y), icon_img)
+
 def draw_throttle_icon(draw, center, size, color):
-    cx, cy = center
-    scale = size / 24.0
+    """Draw throttle pedal icon with supersampling for better quality"""
+    # Render at higher resolution
+    ss_factor = ICON_SUPERSAMPLE
+    ss_size = int(size * ss_factor)
+    icon_img = Image.new('RGBA', (ss_size, ss_size), (0, 0, 0, 0))
+    icon_draw = ImageDraw.Draw(icon_img)
+
+    cx = cy = ss_size / 2
+    scale = ss_size / 24.0
     outline_points = [(9, 4), (15, 4), (16, 18), (12, 20), (8, 18)]
     scaled_outline = [(cx + (px - 12) * scale, cy + (py - 12) * scale) for px, py in outline_points]
 
-    draw.line(scaled_outline + [scaled_outline[0]], fill=color, width=max(2, int(2 * scale)))
+    icon_draw.line(scaled_outline + [scaled_outline[0]], fill=color, width=max(2, int(2 * scale)))
 
     rect_top = cy + (2 - 12) * scale
-    draw.rectangle(
+    icon_draw.rectangle(
         [cx - 3 * scale, rect_top, cx + 3 * scale, rect_top + 2 * scale],
         outline=color,
         width=max(2, int(2 * scale))
     )
+
+    # Scale down and composite
+    icon_img = icon_img.resize((int(size), int(size)), Image.LANCZOS)
+    offset_x = int(center[0] - size / 2)
+    offset_y = int(center[1] - size / 2)
+    draw._image.paste(icon_img, (offset_x, offset_y), icon_img)
 
 def draw_pedal_chip(draw, x, y, value, color, icon_kind, font_small):
     box = [x, y, x + CHIP_SIZE, y + CHIP_SIZE]
@@ -350,7 +388,7 @@ def draw_gear_chip(draw, x, y, gear, font):
     center_x = x + CHIP_SIZE / 2
     center_y = y + CHIP_SIZE / 2
     text_x = int(round(center_x - text_w / 2))
-    text_y = int(round(center_y - text_h / 2 - 0.5))  # nudge up slightly
+    text_y = int(round(center_y - text_h / 2 - 3))  # nudge up to optically center
     draw.text((text_x, text_y), gear_text, fill=text_color, font=font)
 
 def draw_wheel_chip(draw, x, y, angle, autopilot_state):
@@ -371,34 +409,58 @@ def draw_wheel_chip(draw, x, y, angle, autopilot_state):
 
     draw_chip_background(draw, box, fill=base_fill, outline=outline, outline_width=2)
 
-    wheel_img = Image.new('RGBA', (CHIP_SIZE, CHIP_SIZE), (0, 0, 0, 0))
+    # Render wheel icon at higher resolution for better quality
+    ss_size = CHIP_SIZE * ICON_SUPERSAMPLE
+    wheel_img = Image.new('RGBA', (ss_size, ss_size), (0, 0, 0, 0))
     wheel_draw = ImageDraw.Draw(wheel_img)
-    center = CHIP_SIZE // 2
-    radius = 16
+    center = ss_size / 2
 
+    # Match web UI design: outer circle, horizontal bar, vertical bar, center hub
+    # Scale from 24x24 viewBox to supersampled size
+    scale = ss_size / 24.0
+
+    # Outer circle (r=8 in viewBox, scaled)
+    outer_radius = 8 * scale
     wheel_draw.ellipse(
-        [center - radius, center - radius, center + radius, center + radius],
+        [center - outer_radius, center - outer_radius, center + outer_radius, center + outer_radius],
         outline=icon_color,
-        width=3
+        width=max(2, int(1.4 * scale))
     )
 
-    spoke_length = radius - 4
-    for i in range(3):
-        angle_rad = math.radians(i * 120)
-        x1 = center
-        y1 = center
-        x2 = center + spoke_length * math.cos(angle_rad)
-        y2 = center + spoke_length * math.sin(angle_rad)
-        wheel_draw.line([x1, y1, x2, y2], fill=icon_color, width=3)
-
-    wheel_draw.ellipse(
-        [center - 4, center - 4, center + 4, center + 4],
-        outline=icon_color,
-        width=2
+    # Horizontal bar (from x=6.8 to x=17.2 at y=9.8 in viewBox)
+    bar_y = center + (9.8 - 12) * scale  # 9.8 is above center (12)
+    bar_x1 = center + (6.8 - 12) * scale
+    bar_x2 = center + (17.2 - 12) * scale
+    wheel_draw.line(
+        [(bar_x1, bar_y), (bar_x2, bar_y)],
+        fill=icon_color,
+        width=max(2, int(2 * scale))
     )
 
+    # Vertical bar (from y=9.8 to y=16.8 at x=12 in viewBox)
+    bar_x = center  # x=12 is center
+    bar_y1 = center + (9.8 - 12) * scale
+    bar_y2 = center + (16.8 - 12) * scale
+    wheel_draw.line(
+        [(bar_x, bar_y1), (bar_x, bar_y2)],
+        fill=icon_color,
+        width=max(2, int(2 * scale))
+    )
+
+    # Center hub circle (r=1.8 in viewBox)
+    hub_radius = 1.8 * scale
+    wheel_draw.ellipse(
+        [center - hub_radius, center - hub_radius, center + hub_radius, center + hub_radius],
+        outline=icon_color,
+        width=max(1, int(1.4 * scale))
+    )
+
+    # Rotate at high resolution for better quality
     rotation_angle = clamp(angle, -MAX_STEER_DEG, MAX_STEER_DEG)
     wheel_img = wheel_img.rotate(-rotation_angle, resample=Image.BICUBIC)
+
+    # Scale down to target size with high-quality Lanczos resampling
+    wheel_img = wheel_img.resize((CHIP_SIZE, CHIP_SIZE), Image.LANCZOS)
     draw._image.paste(wheel_img, (x, y), wheel_img)
 
 def create_hud_frame(width, height, telemetry, use_mph, state=None):
