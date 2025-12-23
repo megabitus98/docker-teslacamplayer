@@ -24,6 +24,8 @@ public class ExportService : IExportService
     private readonly IClipsService _clipsService;
     private readonly IHubContext<StatusHub> _hubContext;
     private readonly ISeiParserService _seiParser;
+    private readonly IHudRendererService _hudRenderer;
+    private readonly IMp4TimingService _mp4Timing;
 
     private readonly ConcurrentDictionary<string, ExportStatus> _status = new();
     private readonly ConcurrentDictionary<string, string> _outputs = new();
@@ -85,12 +87,14 @@ public class ExportService : IExportService
             TaskContinuationOptions.OnlyOnFaulted);
     }
 
-    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext, ISeiParserService seiParser)
+    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext, ISeiParserService seiParser, IHudRendererService hudRenderer, IMp4TimingService mp4Timing)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
         _hubContext = hubContext;
         _seiParser = seiParser;
+        _hudRenderer = hudRenderer;
+        _mp4Timing = mp4Timing;
     }
 
     public Task<string> StartExportAsync(ExportRequest request)
@@ -133,6 +137,7 @@ public class ExportService : IExportService
     private async Task RunExportAsync(string jobId, ExportRequest request, CancellationToken cancel)
     {
         string srtPath = null;
+        string hudFramesDir = null;
         try
         {
             if (_status.TryGetValue(jobId, out var current))
@@ -220,6 +225,7 @@ public class ExportService : IExportService
                 for (int i = 0; i < parts.Count; i++)
                 {
                     var p = parts[i];
+                    argv.Add("-accurate_seek");
                     argv.Add("-ss");
                     argv.Add(FormatTimeArg(p.start));
                     argv.Add("-t");
@@ -316,12 +322,18 @@ public class ExportService : IExportService
                 }
 
                 filter.Append(string.Join(string.Empty, camOutputs))
-                      .Append($"xstack=inputs={camOutputs.Count}:layout={string.Join('|', layouts)}[stacked]");
+                      .Append($"xstack=inputs={camOutputs.Count}:layout={string.Join('|', layouts)}[stacked_tmp]");
             }
             else
             {
-                filter.Append(camOutputs[0]).Append("copy[stacked]");
+                filter.Append(camOutputs[0]).Append("copy[stacked_tmp]");
             }
+
+            // Force constant frame rate for precise sync
+            filter.Append(';')
+                  .Append("[stacked_tmp]")
+                  .Append("fps=30,setpts=N/(30*TB)")
+                  .Append("[stacked]");
 
             // Optional overlays (location bottom-left, timestamp bottom-right)
             string finalLabel = "stacked";
@@ -357,36 +369,238 @@ public class ExportService : IExportService
             // SEI HUD overlay (if requested)
             if (request.IncludeSeiHud)
             {
-                // Find front camera file for SEI extraction
-                var frontCameraFile = byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Count > 0
-                    ? byCamera[Cameras.Front][0].path
-                    : null;
-
-                if (frontCameraFile != null)
+                // Find front camera segment info for SEI extraction using MP4 frame timing
+                if (byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Count > 0)
                 {
-                    var seiMessages = _seiParser.ExtractSeiMessages(frontCameraFile);
+                    const double seiFrameRate = 30.0; // HUD rendering frame rate
+                    var seiTimeline = new List<(double timeSeconds, SeiMetadata message)>();
+                    var frontSegments = byCamera[Cameras.Front];
+                    var exportDurationSeconds = (end - start).TotalSeconds;
 
-                    if (seiMessages.Count > 0)
+                    Log.Information(
+                        "SEI HUD sync: Processing {SegmentCount} front camera segments using MP4 frame timing",
+                        frontSegments.Count);
+
+                    double cumulativeExportSeconds = 0;
+                    ulong? lastFrameSeqNo = null;
+                    double? lastLat = null, lastLon = null;
+                    float? lastSpeed = null;
+                    int segmentIndex = 0;
+
+                    foreach (var segment in frontSegments)
                     {
-                        var hudFilterBuilder = new SeiHudFilterBuilder(_settingsProvider);
-                        srtPath = Path.Combine(exportDir, $"{jobId}_sei.srt");
-                        hudFilterBuilder.GenerateSeiSubtitleFile(seiMessages, 30.0, srtPath);
-
-                        if (File.Exists(srtPath))
+                        // Extract MP4 frame timing metadata
+                        var timeline = await _mp4Timing.GetFrameTimelineAsync(segment.path);
+                        if (timeline == null)
                         {
-                            // Use FFmpeg subtitles filter to burn in SRT
-                            var srtEscaped = srtPath.Replace("\\", "\\\\").Replace(":", "\\:");
-                            var subtitlesFilter = $"subtitles={srtEscaped}:force_style='Alignment=2,MarginV=30,Fontsize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,Bold=1'";
-
-                            var seiHudOut = "[sei_hud]";
-                            filter.Append(';')
-                                  .Append('[').Append(finalLabel).Append(']')
-                                  .Append(subtitlesFilter)
-                                  .Append(seiHudOut);
-                            finalLabel = "sei_hud";
-
-                            Log.Information("SEI HUD overlay added to export {JobId}", jobId);
+                            Log.Warning("Failed to extract MP4 timing for {Path}, skipping SEI extraction", segment.path);
+                            segmentIndex++;
+                            continue;
                         }
+
+                        // Extract ALL SEI messages from this segment
+                        var allMessages = _seiParser.ExtractSeiMessages(segment.path);
+                        if (allMessages.Count == 0)
+                        {
+                            Log.Warning("No SEI metadata found in front segment {Path}", segment.path);
+                            segmentIndex++;
+                            continue;
+                        }
+
+                        // Validate timeline matches SEI message count
+                        if (timeline.FrameCount != allMessages.Count)
+                        {
+                            Log.Warning(
+                                "MP4 frame count ({FrameCount}) != SEI message count ({SeiCount}) for {Path}. Using min for safety.",
+                                timeline.FrameCount, allMessages.Count, segment.path);
+
+                            // Trim SEI messages if MP4 has fewer frames
+                            if (timeline.FrameCount < allMessages.Count)
+                            {
+                                allMessages = allMessages.GetRange(0, timeline.FrameCount);
+                            }
+                        }
+
+                        var startMs = segment.start * 1000.0;
+                        var endMs = (segment.start + segment.duration) * 1000.0;
+                        var startFrameIndex = timeline.FindFrameIndexForMs(startMs);
+                        var endFrameIndex = timeline.FindFrameIndexForMs(endMs);
+
+                        if (startFrameIndex < 0 || endFrameIndex < 0)
+                        {
+                            Log.Warning(
+                                "Frame indices not found for SEI extraction: start={StartMs:F2}ms end={EndMs:F2}ms for {Path}",
+                                startMs, endMs, segment.path);
+                            segmentIndex++;
+                            continue;
+                        }
+
+                        startFrameIndex = Math.Max(0, startFrameIndex);
+                        endFrameIndex = Math.Min(
+                            Math.Min(endFrameIndex, timeline.FrameCount - 1),
+                            allMessages.Count - 1);
+
+                        if (endFrameIndex < startFrameIndex)
+                        {
+                            Log.Warning("Invalid frame range for SEI extraction: [{Start}..{End}] for {Path}",
+                                startFrameIndex, endFrameIndex, segment.path);
+                            segmentIndex++;
+                            continue;
+                        }
+
+                        var segmentFrameCount = endFrameIndex - startFrameIndex + 1;
+                        var segmentSeiMessages = allMessages.GetRange(startFrameIndex, segmentFrameCount);
+                        var framesAdded = 0;
+
+                        for (int i = 0; i < segmentSeiMessages.Count; i++)
+                        {
+                            var globalFrameIndex = startFrameIndex + i;
+                            if (globalFrameIndex >= timeline.FrameStartsMs.Length)
+                            {
+                                break;
+                            }
+
+                            var frameStartMs = timeline.FrameStartsMs[globalFrameIndex];
+                            var exportRelativeSeconds = cumulativeExportSeconds + (Math.Max(0, frameStartMs - startMs) / 1000.0);
+                            seiTimeline.Add((exportRelativeSeconds, segmentSeiMessages[i]));
+                            framesAdded++;
+                        }
+
+                        if (framesAdded != segmentFrameCount)
+                        {
+                            Log.Warning(
+                                "SEI frame mismatch for {Path}: expected {Expected} frames from timeline, added {Added}",
+                                segment.path,
+                                segmentFrameCount,
+                                framesAdded);
+                        }
+
+                        // Diagnostic: Check SEI continuity across segment boundaries
+                        if (segmentSeiMessages.Count > 0)
+                        {
+                            var firstSei = segmentSeiMessages[0];
+                            var lastSei = segmentSeiMessages[segmentSeiMessages.Count - 1];
+
+                            if (lastFrameSeqNo.HasValue)
+                            {
+                                var seqGap = (long)(firstSei.FrameSeqNo - lastFrameSeqNo.Value);
+                                var expectedGap = 1L; // Should increment by 1
+
+                                if (seqGap != expectedGap)
+                                {
+                                    Log.Warning(
+                                        "SEI boundary discontinuity: Segment {SegmentIndex}, Expected FrameSeqNo={Expected}, Actual={Actual}, Gap={Gap}",
+                                        segmentIndex,
+                                        lastFrameSeqNo.Value + 1,
+                                        firstSei.FrameSeqNo,
+                                        seqGap);
+                                }
+
+                                // Check for backward GPS movement (would indicate wrong SEI data)
+                                if (lastLat.HasValue && lastLon.HasValue)
+                                {
+                                    var latDiff = Math.Abs(firstSei.LatitudeDeg - lastLat.Value);
+                                    var lonDiff = Math.Abs(firstSei.LongitudeDeg - lastLon.Value);
+
+                                    // Rough distance calculation (degrees to km approximation)
+                                    var distanceKm = Math.Sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111.0;
+
+                                    if (distanceKm > 1.0) // More than 1km jump at boundary
+                                    {
+                                        Log.Warning(
+                                            "Large GPS jump at boundary: {Distance:F3}km from ({LastLat:F6},{LastLon:F6}) to ({CurrLat:F6},{CurrLon:F6})",
+                                            distanceKm,
+                                            lastLat.Value, lastLon.Value,
+                                            firstSei.LatitudeDeg, firstSei.LongitudeDeg);
+                                    }
+                                }
+
+                                // Check for speed backward jump
+                                if (lastSpeed.HasValue && firstSei.VehicleSpeedMps < lastSpeed.Value - 5.0f)
+                                {
+                                    Log.Warning(
+                                        "Speed backward jump at boundary: {LastSpeed:F1} m/s → {CurrSpeed:F1} m/s",
+                                        lastSpeed.Value,
+                                        firstSei.VehicleSpeedMps);
+                                }
+                            }
+
+                            lastFrameSeqNo = lastSei.FrameSeqNo;
+                            lastLat = lastSei.LatitudeDeg;
+                            lastLon = lastSei.LongitudeDeg;
+                            lastSpeed = lastSei.VehicleSpeedMps;
+                        }
+
+                        Log.Information(
+                            "SEI segment {SegmentIndex}: File={FileName}, FileRelativeTime=[{Start:F2}s + {Duration:F2}s], ExportPosition={ExportPos:F2}s, SEI extracted={Count}, FrameSeqNo=[{FirstSeq}..{LastSeq}], Speed=[{FirstSpeed:F1}..{LastSpeed:F1}] m/s",
+                            segmentIndex,
+                            Path.GetFileName(segment.path),
+                            segment.start,
+                            segment.duration,
+                            cumulativeExportSeconds,
+                            segmentSeiMessages.Count,
+                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[0].FrameSeqNo : 0,
+                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[segmentSeiMessages.Count - 1].FrameSeqNo : 0,
+                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[0].VehicleSpeedMps : 0,
+                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[segmentSeiMessages.Count - 1].VehicleSpeedMps : 0);
+
+                        cumulativeExportSeconds += segment.duration;
+                        segmentIndex++;
+                    }
+
+                    if (seiTimeline.Count > 0)
+                    {
+                        // Resample SEI timeline to match export FPS so HUD duration matches video duration
+                        var resampledSeiMessages = ResampleSeiMessages(seiTimeline, seiFrameRate, exportDurationSeconds);
+                        var timelineDurationSeconds = Math.Max(0, seiTimeline[seiTimeline.Count - 1].timeSeconds - seiTimeline[0].timeSeconds);
+                        var resampledDurationSeconds = resampledSeiMessages.Count / seiFrameRate;
+
+                        Log.Information(
+                            "SEI HUD sync complete: Segments={SegmentCount}, Raw frames={RawCount}, Expected duration={ExpectedDuration:F2}s, Timeline duration={TimelineDuration:F2}s, Resampled duration={ResampledDuration:F2}s",
+                            frontSegments.Count,
+                            seiTimeline.Count,
+                            exportDurationSeconds,
+                            timelineDurationSeconds,
+                            resampledDurationSeconds);
+
+                        // Render HUD frames to temp directory
+                        hudFramesDir = Path.Combine(exportDir, $"{jobId}_hud_frames");
+                        var useMph = _settingsProvider.Settings.SpeedUnit == "mph";
+
+                        await _hudRenderer.RenderHudFramesToDirectoryAsync(
+                            resampledSeiMessages,
+                            hudFramesDir,
+                            outW,
+                            outH,
+                            seiFrameRate,
+                            useMph,
+                            cancel);
+
+                        // Add HUD frames as FFmpeg input
+                        var hudInputIndex = globalInputIndex;
+                        argv.Add("-framerate");
+                        argv.Add(seiFrameRate.ToString("0.##", CultureInfo.InvariantCulture));
+                        argv.Add("-i");
+                        argv.Add(Path.Combine(hudFramesDir, "frame_%06d.png"));
+                        globalInputIndex++;
+
+                        // Prepare HUD stream with precise timing
+                        var hudSyncOut = "[hud_sync]";
+                        filter.Append(';')
+                              .Append($"[{hudInputIndex}:v]")
+                              .Append("fps=30,setpts=N/(30*TB)")
+                              .Append(hudSyncOut);
+
+                        // Overlay HUD on video using overlay filter with shortest option
+                        var hudOverlayOut = "[hud_overlay]";
+                        filter.Append(';')
+                              .Append('[').Append(finalLabel).Append(']')
+                              .Append(hudSyncOut)
+                              .Append("overlay=0:0:shortest=1")
+                              .Append(hudOverlayOut);
+                        finalLabel = "hud_overlay";
+
+                        Log.Information("Graphical SEI HUD overlay added to export {JobId} ({Count} frames)", jobId, resampledSeiMessages.Count);
                     }
                     else
                     {
@@ -544,6 +758,20 @@ public class ExportService : IExportService
             {
                 SafeDelete(srtPath);
             }
+
+            // Cleanup HUD frames directory
+            if (!string.IsNullOrEmpty(hudFramesDir) && Directory.Exists(hudFramesDir))
+            {
+                try
+                {
+                    Directory.Delete(hudFramesDir, recursive: true);
+                    Log.Debug("Cleaned up HUD frames directory: {Dir}", hudFramesDir);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Failed to clean up HUD frames directory: {Dir}", hudFramesDir);
+                }
+            }
         }
     }
 
@@ -581,6 +809,54 @@ public class ExportService : IExportService
             "mov" => "mov",
             _ => "mp4"
         };
+    }
+
+    private static List<SeiMetadata> ResampleSeiMessages(
+        List<(double timeSeconds, SeiMetadata message)> timeline,
+        double targetFrameRate,
+        double expectedDurationSeconds)
+    {
+        var result = new List<SeiMetadata>();
+
+        if (timeline == null || timeline.Count == 0 || targetFrameRate <= 0)
+        {
+            return result;
+        }
+
+        timeline.Sort((a, b) => a.timeSeconds.CompareTo(b.timeSeconds));
+
+        var frameCount = Math.Max(1, (int)Math.Ceiling(expectedDurationSeconds * targetFrameRate));
+        var frameDuration = 1.0 / targetFrameRate;
+
+        int idx = 0;
+        for (int i = 0; i < frameCount; i++)
+        {
+            var targetTime = i * frameDuration;
+
+            while (idx + 1 < timeline.Count && timeline[idx + 1].timeSeconds <= targetTime)
+            {
+                idx++;
+            }
+
+            var chosen = timeline[idx].message;
+
+            // If current entry is null, try to grab the next non-null message
+            if (chosen == null)
+            {
+                for (int j = idx + 1; j < timeline.Count; j++)
+                {
+                    if (timeline[j].message != null)
+                    {
+                        chosen = timeline[j].message;
+                        break;
+                    }
+                }
+            }
+
+            result.Add(chosen);
+        }
+
+        return result;
     }
 
     private static void AddCodecArgs(List<string> args, ExportRequest request)

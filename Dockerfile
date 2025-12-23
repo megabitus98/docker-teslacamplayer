@@ -72,6 +72,16 @@ RUN apt-get update && \
 COPY --from=dotnet-builder /tmp/publish/ /app/teslacamplayer/
 COPY --from=client-build   /client-static/css/ /app/teslacamplayer/wwwroot/css/
 
+# Copy HUD rendering scripts
+COPY TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/lib/ /app/teslacamplayer/lib/
+
+# Install Python and Pillow for HUD renderer
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 python3-pip fonts-dejavu-core && \
+    pip3 install --no-cache-dir --break-system-packages Pillow && \
+    rm -rf /var/lib/apt/lists/* && \
+    chmod +x /app/teslacamplayer/lib/hud_renderer.py
+
 # Existing s6 init files
 COPY root/ /
 

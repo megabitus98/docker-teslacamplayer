@@ -1,0 +1,530 @@
+#!/usr/bin/env python3
+"""
+Tesla Cam Player - HUD Renderer
+Generates graphical HUD overlays from SEI telemetry data using PIL/Pillow
+"""
+
+import json
+import sys
+import argparse
+import math
+from PIL import Image, ImageDraw, ImageFont
+
+# HUD Constants
+HUD_WIDTH = 520
+HUD_HEIGHT = 60
+HUD_MARGIN_TOP = 5
+HUD_BG_COLOR = (8, 10, 14, 220)
+HUD_BORDER_COLOR = (255, 255, 255, 42)
+HUD_GLOSS_COLOR = (255, 255, 255, 18)
+HUD_TEXT_COLOR = (245, 245, 245, 255)
+
+CHIP_SIZE = 42
+CHIP_RADIUS = 12
+CHIP_INNER_RADIUS = 10
+CHIP_GAP = 8
+CHIP_GAP_WIDE = 14
+SPEED_BLOCK_HALF_W = 60
+SPEED_BLOCK_HALF_H = 28
+
+BLINKER_COLOR = (120, 255, 140, 220)  # Green
+BRAKE_COLOR = (255, 90, 90, 230)  # Red
+THROTTLE_COLOR = (120, 255, 120, 220)  # Green
+AUTOPILOT_COLOR = (100, 170, 255, 230)  # Blue
+CRUISE_COLOR = (90, 160, 255, 200)
+MAX_STEER_DEG = 540
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Render HUD overlay from SEI telemetry')
+    parser.add_argument('--sei-json', required=True, help='Path to SEI messages JSON file')
+    parser.add_argument('--width', type=int, default=1920, help='Output width')
+    parser.add_argument('--height', type=int, default=1080, help='Output height')
+    parser.add_argument('--framerate', type=float, default=30.0, help='Frame rate')
+    parser.add_argument('--use-mph', action='store_true', help='Use MPH instead of km/h')
+    parser.add_argument('--output-dir', help='Output directory for PNG frames (if not using pipe)')
+    parser.add_argument('--pipe', action='store_true', help='Output raw RGBA to stdout')
+    return parser.parse_args()
+
+def load_sei_messages(json_path):
+    """Load SEI messages from JSON file"""
+    with open(json_path, 'r') as f:
+        messages = json.load(f)
+    return messages
+
+def load_font(size):
+    """Try to load a TrueType font, fall back to default if not available"""
+    font_paths = [
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/System/Library/Fonts/Helvetica.ttc',
+        '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf'
+    ]
+
+    for font_path in font_paths:
+        try:
+            return ImageFont.truetype(font_path, size)
+        except:
+            continue
+
+    # Fall back to default font
+    return ImageFont.load_default()
+
+def clamp(value, min_value, max_value):
+    return max(min_value, min(max_value, value))
+
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+def lerp_color(c1, c2, t):
+    t = clamp(t, 0.0, 1.0)
+    return tuple(int(round(lerp(c1[i], c2[i], t))) for i in range(4))
+
+class HudRenderState:
+    def __init__(self, frame_rate):
+        safe_rate = frame_rate if frame_rate and frame_rate > 0 else 30.0
+        self.frame_rate = safe_rate
+        self.frame_dt_ms = 1000.0 / safe_rate
+        self.elapsed_ms = 0.0
+        self.steer_initialized = False
+        self.steer_target_deg = 0.0
+        self.steer_display_deg = 0.0
+        self.last_target_change_ms = 0.0
+
+    def advance(self):
+        self.elapsed_ms += self.frame_dt_ms
+
+    def blink_pulse(self):
+        phase = ((self.elapsed_ms / 1000.0) + 0.5) % 1.0  # start bright to mirror CSS keyframes
+        return 0.5 * (1 - math.cos(2 * math.pi * phase))
+
+    def smooth_steer(self, target_deg):
+        target = clamp(target_deg, -MAX_STEER_DEG, MAX_STEER_DEG)
+        if not self.steer_initialized:
+            self.steer_initialized = True
+            self.steer_target_deg = target
+            self.steer_display_deg = target
+            self.last_target_change_ms = self.elapsed_ms
+        else:
+            if target != self.steer_target_deg:
+                self.steer_target_deg = target
+                self.last_target_change_ms = self.elapsed_ms
+
+            smoothing = 1 - math.exp(-self.frame_dt_ms / 110.0) if self.frame_dt_ms > 0 else 1.0
+            self.steer_display_deg += (self.steer_target_deg - self.steer_display_deg) * smoothing
+
+            if self.elapsed_ms - self.last_target_change_ms > 500.0:
+                self.steer_display_deg = self.steer_target_deg
+
+        return self.steer_display_deg
+
+def pick_number(data, keys, default=None):
+    for key in keys:
+        if key not in data:
+            continue
+        try:
+            val = float(data[key])
+            if not math.isnan(val):
+                return val
+        except (TypeError, ValueError):
+            continue
+    return default
+
+def pick_bool(data, keys, default=False):
+    for key in keys:
+        val = data.get(key)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return val != 0
+        if isinstance(val, str):
+            lowered = val.strip().lower()
+            if lowered in ['true', '1', 'yes', 'on']:
+                return True
+            if lowered in ['false', '0', 'no', 'off']:
+                return False
+    return default
+
+def normalize_gear(raw):
+    if raw is None:
+        return 'P'
+
+    if isinstance(raw, (int, float)):
+        idx = int(raw)
+        mapping = ['P', 'D', 'R', 'N']
+        if 0 <= idx < len(mapping):
+            return mapping[idx]
+
+    if isinstance(raw, str):
+        gear_str = raw.strip().upper()
+        lookup = {
+            'PARK': 'P',
+            'GEAR_PARK': 'P',
+            'P': 'P',
+            'DRIVE': 'D',
+            'GEAR_DRIVE': 'D',
+            'D': 'D',
+            'REVERSE': 'R',
+            'GEAR_REVERSE': 'R',
+            'R': 'R',
+            'NEUTRAL': 'N',
+            'GEAR_NEUTRAL': 'N',
+            'N': 'N'
+        }
+        return lookup.get(gear_str, gear_str[:1] if gear_str else '?')
+
+    return '?'
+
+def normalize_autopilot(raw):
+    if raw is None:
+        return 'NONE'
+
+    if isinstance(raw, (int, float)):
+        idx = int(raw)
+        states = ['NONE', 'SELF_DRIVING', 'AUTOSTEER', 'TACC']
+        return states[idx] if 0 <= idx < len(states) else 'NONE'
+
+    state = str(raw).strip().upper()
+    aliases = {
+        'AUTOPILOT': 'AUTOSTEER',
+        'FSD': 'SELF_DRIVING',
+        'SELFDRIVING': 'SELF_DRIVING',
+        'SELF-DRIVING': 'SELF_DRIVING',
+        'AUTO-STEER': 'AUTOSTEER',
+        'AUTO_STEER': 'AUTOSTEER',
+        'CRUISE': 'TACC'
+    }
+    return aliases.get(state, state or 'NONE')
+
+def draw_rounded_rectangle(draw, xy, radius, fill=None, outline=None, width=1):
+    """Draw a rounded rectangle without outline self-intersections."""
+    x1, y1, x2, y2 = xy
+    w = x2 - x1
+    h = y2 - y1
+    r = max(0, min(radius, w / 2, h / 2))
+
+    rect = [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))]
+    r = int(round(r))
+
+    if fill is not None:
+        draw.rounded_rectangle(rect, radius=r, fill=fill)
+
+    if outline is not None and width and width > 0:
+        draw.rounded_rectangle(rect, radius=r, outline=outline, width=int(width))
+
+def draw_chip_background(draw, box, radius=CHIP_RADIUS, fill=None, outline=None, outline_width=1):
+    draw_rounded_rectangle(draw, box, radius, fill=fill, outline=outline, width=outline_width)
+    x1, y1, x2, y2 = box
+    gloss_height = max(4, int((y2 - y1) * 0.35))
+    gloss_box = [x1 + 2, y1 + 2, x2 - 2, y1 + 2 + gloss_height]
+    draw_rounded_rectangle(draw, gloss_box, max(2, radius - 4), fill=HUD_GLOSS_COLOR)
+
+def draw_blinker_chip(draw, x, y, active, direction='left', pulse=1.0):
+    box = [x, y, x + CHIP_SIZE, y + CHIP_SIZE]
+    pulse = clamp(pulse, 0.0, 1.0)
+
+    base_fill = (22, 24, 26, 175)
+    base_outline = HUD_BORDER_COLOR
+    if active:
+        base_fill = lerp_color(base_fill, (24, 36, 26, 210), 0.65 + 0.25 * pulse)
+        base_outline = lerp_color(base_outline, (140, 255, 170, 180), 0.4 + 0.4 * pulse)
+
+    draw_chip_background(draw, box, fill=base_fill, outline=base_outline, outline_width=2)
+
+    cx = x + CHIP_SIZE / 2
+    cy = y + CHIP_SIZE / 2
+    arrow = 14
+
+    if direction == 'left':
+        points = [
+            (cx + arrow * 0.65, cy - arrow),
+            (cx - arrow * 0.85, cy),
+            (cx + arrow * 0.65, cy + arrow)
+        ]
+    else:
+        points = [
+            (cx - arrow * 0.65, cy - arrow),
+            (cx + arrow * 0.85, cy),
+            (cx - arrow * 0.65, cy + arrow)
+        ]
+
+    arrow_base = (210, 210, 210, 170)
+    arrow_color = lerp_color(arrow_base, BLINKER_COLOR, 0.65 + 0.35 * pulse) if active else arrow_base
+    draw.polygon(points, fill=arrow_color)
+
+def draw_brake_icon(draw, center, size, color):
+    cx, cy = center
+    scale = size / 24.0
+    outline_points = [(6, 7), (18, 7), (20, 16), (12, 19), (4, 16)]
+    scaled_outline = [(cx + (px - 12) * scale, cy + (py - 12) * scale) for px, py in outline_points]
+
+    draw.line(scaled_outline + [scaled_outline[0]], fill=color, width=max(2, int(2 * scale)))
+
+    for x in [8, 10, 12, 14, 16]:
+        x_pos = cx + (x - 12) * scale
+        draw.line(
+            [(x_pos, cy + (9 - 12) * scale), (x_pos, cy + (14 - 12) * scale)],
+            fill=color,
+            width=max(1, int(1.4 * scale))
+        )
+
+def draw_throttle_icon(draw, center, size, color):
+    cx, cy = center
+    scale = size / 24.0
+    outline_points = [(9, 4), (15, 4), (16, 18), (12, 20), (8, 18)]
+    scaled_outline = [(cx + (px - 12) * scale, cy + (py - 12) * scale) for px, py in outline_points]
+
+    draw.line(scaled_outline + [scaled_outline[0]], fill=color, width=max(2, int(2 * scale)))
+
+    rect_top = cy + (2 - 12) * scale
+    draw.rectangle(
+        [cx - 3 * scale, rect_top, cx + 3 * scale, rect_top + 2 * scale],
+        outline=color,
+        width=max(2, int(2 * scale))
+    )
+
+def draw_pedal_chip(draw, x, y, value, color, icon_kind, font_small):
+    box = [x, y, x + CHIP_SIZE, y + CHIP_SIZE]
+    active = value > 0
+
+    outline_color = HUD_BORDER_COLOR
+    base_fill = (24, 24, 26, 200)
+    icon_color = (235, 235, 235, 230)
+    if icon_kind == 'brake' and active:
+        outline_color = (255, 120, 120, 220)
+        icon_color = (255, 190, 190, 240)
+        base_fill = (40, 16, 16, 210)
+
+    draw_chip_background(draw, box, fill=base_fill, outline=outline_color, outline_width=2)
+
+    inner = [x + 7, y + 7, x + CHIP_SIZE - 7, y + CHIP_SIZE - 7]
+    draw_rounded_rectangle(draw, inner, CHIP_INNER_RADIUS, fill=(8, 8, 10, 190), outline=(255, 255, 255, 24), width=1)
+
+    clamped = clamp(value, 0.0, 1.0)
+    fill_height = int((inner[3] - inner[1]) * clamped)
+    if fill_height > 0:
+        fill_box = [inner[0] + 1, inner[3] - fill_height, inner[2] - 1, inner[3]]
+        draw_rounded_rectangle(draw, fill_box, CHIP_INNER_RADIUS, fill=color)
+
+    icon_center = (inner[0] + (inner[2] - inner[0]) / 2, inner[1] + (inner[3] - inner[1]) / 2)
+    icon_size = 24
+    if icon_kind == 'brake':
+        draw_brake_icon(draw, icon_center, icon_size, icon_color)
+    else:
+        draw_throttle_icon(draw, icon_center, icon_size, icon_color)
+
+def draw_speed_block(draw, x, y, speed, unit, font_large, font_small):
+    speed_box = [x - SPEED_BLOCK_HALF_W, y - SPEED_BLOCK_HALF_H, x + SPEED_BLOCK_HALF_W, y + SPEED_BLOCK_HALF_H]
+    draw_chip_background(draw, speed_box, radius=22, fill=(18, 20, 24, 185), outline=HUD_BORDER_COLOR, outline_width=2)
+
+    speed_text = f"{int(speed)}"
+    bbox = draw.textbbox((0, 0), speed_text, font=font_large)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    speed_y = speed_box[1] + 4
+    draw.text((x - text_w // 2, speed_y), speed_text, fill=HUD_TEXT_COLOR, font=font_large)
+
+    unit_bbox = draw.textbbox((0, 0), unit, font=font_small)
+    unit_w = unit_bbox[2] - unit_bbox[0]
+    unit_h = unit_bbox[3] - unit_bbox[1]
+    unit_y = speed_box[3] - unit_h - 4
+    unit_y = max(unit_y, speed_y + text_h + 4)  # ensure no overlap
+    draw.text((x - unit_w // 2, unit_y), unit, fill=(210, 210, 210, 210), font=font_small)
+    return speed_box
+
+def draw_gear_chip(draw, x, y, gear, font):
+    box = [x, y, x + CHIP_SIZE, y + CHIP_SIZE]
+    gear_text = normalize_gear(gear)
+    gear_colors = {
+        'P': (240, 240, 240, 255),
+        'R': (255, 160, 160, 255),
+        'N': (180, 210, 255, 255),
+        'D': HUD_TEXT_COLOR
+    }
+    text_color = gear_colors.get(gear_text, HUD_TEXT_COLOR)
+
+    draw_chip_background(draw, box, fill=(20, 20, 22, 200), outline=HUD_BORDER_COLOR, outline_width=2)
+
+    bbox = draw.textbbox((0, 0), gear_text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    center_x = x + CHIP_SIZE / 2
+    center_y = y + CHIP_SIZE / 2
+    text_x = int(round(center_x - text_w / 2))
+    text_y = int(round(center_y - text_h / 2 - 0.5))  # nudge up slightly
+    draw.text((text_x, text_y), gear_text, fill=text_color, font=font)
+
+def draw_wheel_chip(draw, x, y, angle, autopilot_state):
+    box = [x, y, x + CHIP_SIZE, y + CHIP_SIZE]
+    autopilot_state = normalize_autopilot(autopilot_state)
+    is_autopilot = autopilot_state in ['AUTOSTEER', 'SELF_DRIVING']
+    is_cruise = autopilot_state in ['TACC']
+
+    base_fill = (22, 24, 26, 200)
+    outline = HUD_BORDER_COLOR
+    icon_color = (225, 225, 225, 240)
+
+    if is_autopilot:
+        icon_color = AUTOPILOT_COLOR
+    elif is_cruise:
+        base_fill = (18, 28, 42, 200)
+        outline = (90, 160, 255, 170)
+
+    draw_chip_background(draw, box, fill=base_fill, outline=outline, outline_width=2)
+
+    wheel_img = Image.new('RGBA', (CHIP_SIZE, CHIP_SIZE), (0, 0, 0, 0))
+    wheel_draw = ImageDraw.Draw(wheel_img)
+    center = CHIP_SIZE // 2
+    radius = 16
+
+    wheel_draw.ellipse(
+        [center - radius, center - radius, center + radius, center + radius],
+        outline=icon_color,
+        width=3
+    )
+
+    spoke_length = radius - 4
+    for i in range(3):
+        angle_rad = math.radians(i * 120)
+        x1 = center
+        y1 = center
+        x2 = center + spoke_length * math.cos(angle_rad)
+        y2 = center + spoke_length * math.sin(angle_rad)
+        wheel_draw.line([x1, y1, x2, y2], fill=icon_color, width=3)
+
+    wheel_draw.ellipse(
+        [center - 4, center - 4, center + 4, center + 4],
+        outline=icon_color,
+        width=2
+    )
+
+    rotation_angle = clamp(angle, -MAX_STEER_DEG, MAX_STEER_DEG)
+    wheel_img = wheel_img.rotate(-rotation_angle, resample=Image.BICUBIC)
+    draw._image.paste(wheel_img, (x, y), wheel_img)
+
+def create_hud_frame(width, height, telemetry, use_mph, state=None):
+    """Create a single HUD frame"""
+    # Create transparent image
+    img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    if state:
+        state.advance()
+
+    # Load fonts
+    font_large = load_font(34)
+    font_medium = load_font(20)
+    font_small = load_font(11)
+
+    # Calculate HUD position (centered horizontally, near bottom where blank space exists)
+    hud_x = (width - HUD_WIDTH) // 2
+    hud_y = HUD_MARGIN_TOP
+
+    # No pill background; render chips directly over video
+
+    # Parse telemetry data
+    if telemetry is None:
+        return img
+
+    speed_mps = pick_number(telemetry, ['vehicleSpeedMps', 'vehicle_speed_mps', 'speed_mps'], 0) or 0
+    speed_mph = speed_mps * 2.23694
+    speed = speed_mph if use_mph else speed_mph * 1.60934
+    unit = 'mph' if use_mph else 'km/h'
+
+    gear = telemetry.get('gearState') or telemetry.get('gear_state') or telemetry.get('gear')
+    brake = pick_bool(telemetry, ['brakeApplied', 'brake_applied'], False)
+    throttle_raw = pick_number(telemetry, ['throttlePct', 'acceleratorPedalPosition', 'accelerator_pedal_position'], 0) or 0
+    if throttle_raw <= 1.5:
+        throttle_raw *= 100
+    throttle = clamp(throttle_raw / 100.0, 0.0, 1.0)
+    steering_angle = pick_number(telemetry, ['steeringWheelAngle', 'steering_wheel_angle'], 0) or 0
+    left_blinker = pick_bool(telemetry, ['leftBlinkerOn', 'blinker_on_left'], False)
+    right_blinker = pick_bool(telemetry, ['rightBlinkerOn', 'blinker_on_right'], False)
+    autopilot_raw = telemetry.get('autopilotState') or telemetry.get('autopilot_state') or 'NONE'
+    autopilot = normalize_autopilot(autopilot_raw)
+    steer_display_angle = state.smooth_steer(steering_angle) if state else clamp(steering_angle, -MAX_STEER_DEG, MAX_STEER_DEG)
+    blinker_pulse = state.blink_pulse() if state else 1.0
+
+    chip_y = hud_y + (HUD_HEIGHT - CHIP_SIZE) // 2
+
+    speed_x = hud_x + HUD_WIDTH // 2
+    speed_y = hud_y + HUD_HEIGHT // 2
+    speed_box = draw_speed_block(draw, speed_x, speed_y - 2, speed, unit, font_large, font_small)
+
+    # symmetric spacing around the speed block
+    LEFT_CHIPS = 3
+    RIGHT_CHIPS = 3
+    left_group_w = LEFT_CHIPS * CHIP_SIZE + (LEFT_CHIPS - 1) * CHIP_GAP
+    right_group_w = RIGHT_CHIPS * CHIP_SIZE + (RIGHT_CHIPS - 1) * CHIP_GAP
+    gap = CHIP_GAP_WIDE
+    pad = 2  # keep outlines/AA from touching
+
+    left_end = speed_box[0] - gap - pad
+    left_start = left_end - left_group_w
+    right_start = speed_box[2] + gap + pad
+
+    # left group: blinker, gear, brake
+    current_x = left_start
+    draw_blinker_chip(draw, current_x, chip_y, left_blinker, 'left', pulse=blinker_pulse)
+    current_x += CHIP_SIZE + CHIP_GAP
+
+    draw_gear_chip(draw, current_x, chip_y, gear, font_medium)
+    current_x += CHIP_SIZE + CHIP_GAP
+
+    brake_value = 1.0 if brake else 0.0
+    draw_pedal_chip(draw, current_x, chip_y, brake_value, BRAKE_COLOR, 'brake', font_small)
+
+    # right group: wheel, throttle, blinker
+    current_x = right_start
+    draw_wheel_chip(draw, current_x, chip_y, steer_display_angle, autopilot)
+    current_x += CHIP_SIZE + CHIP_GAP
+
+    draw_pedal_chip(draw, current_x, chip_y, throttle, THROTTLE_COLOR, 'throttle', font_small)
+    current_x += CHIP_SIZE + CHIP_GAP
+
+    draw_blinker_chip(draw, current_x, chip_y, right_blinker, 'right', pulse=blinker_pulse)
+
+    return img
+
+def main():
+    args = parse_args()
+
+    # Load SEI messages
+    messages = load_sei_messages(args.sei_json)
+    total = len(messages)
+    state = HudRenderState(args.framerate)
+
+    sys.stderr.write(f"Rendering {total} HUD frames to {'pipe' if args.pipe else args.output_dir}...\n")
+    sys.stderr.flush()
+
+    for i, telemetry in enumerate(messages):
+        # Create HUD frame
+        img = create_hud_frame(args.width, args.height, telemetry, args.use_mph, state)
+
+        if args.pipe:
+            # Output raw RGBA to stdout
+            sys.stdout.buffer.write(img.tobytes())
+            sys.stdout.buffer.flush()
+        else:
+            # Save as PNG file
+            frame_path = f"{args.output_dir}/frame_{i:06d}.png"
+            img.save(frame_path, 'PNG')
+
+        # Progress reporting
+        if (i + 1) % 10 == 0 or (i + 1) == total:
+            sys.stderr.write(f"\rRendered {i+1}/{total} frames ({(i+1)/total*100:.1f}%)")
+            sys.stderr.flush()
+
+    sys.stderr.write("\nHUD rendering complete\n")
+    sys.stderr.flush()
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\nHUD rendering cancelled\n")
+        sys.exit(1)
+    except Exception as e:
+        sys.stderr.write(f"\nError: {e}\n")
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)

@@ -21,6 +21,8 @@ builder.Services.AddSingleton<IClipIndexRepository, SqliteClipIndexRepository>()
 builder.Services.AddTransient<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ISeiParserService, SeiParserService>();
+builder.Services.AddTransient<IMp4TimingService, Mp4TimingService>();
+builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
 builder.Services.AddHostedService<ExportCleanupService>();
 builder.Services.AddSignalR();
 #if WINDOWS

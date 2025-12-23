@@ -3,6 +3,7 @@ using Serilog;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using TeslaCamPlayer.BlazorHosted.Server.Models;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 
 namespace TeslaCamPlayer.BlazorHosted.Server.Services;
@@ -202,5 +203,54 @@ public class SeiParserService : ISeiParserService
 
         // Return last message if beyond end
         return messages[messages.Count - 1];
+    }
+
+    public List<SeiMetadata> ExtractSeiMessagesForTimeRange(
+        List<SeiMetadata> allMessages,
+        Mp4FrameTimeline timeline,
+        double startSeconds,
+        double durationSeconds)
+    {
+        if (allMessages == null || allMessages.Count == 0 || timeline == null)
+        {
+            Log.Warning("Cannot extract SEI messages: null input");
+            return new List<SeiMetadata>();
+        }
+
+        var startMs = startSeconds * 1000.0;
+        var endMs = (startSeconds + durationSeconds) * 1000.0;
+
+        // Binary search for start and end frame indices using timeline
+        var startFrameIndex = timeline.FindFrameIndexForMs(startMs);
+        var endFrameIndex = timeline.FindFrameIndexForMs(endMs);
+
+        if (startFrameIndex < 0 || endFrameIndex < 0)
+        {
+            Log.Warning("Frame indices not found for time range [{Start:F2}s - {End:F2}s]",
+                startSeconds, startSeconds + durationSeconds);
+            return new List<SeiMetadata>();
+        }
+
+        // Clamp to SEI message bounds
+        startFrameIndex = Math.Max(0, startFrameIndex);
+        endFrameIndex = Math.Min(allMessages.Count - 1, endFrameIndex);
+
+        if (endFrameIndex < startFrameIndex)
+        {
+            Log.Warning("Invalid frame range for SEI extraction: [{Start}..{End}]",
+                startFrameIndex, endFrameIndex);
+            return new List<SeiMetadata>();
+        }
+
+        var count = endFrameIndex - startFrameIndex + 1;
+        var result = allMessages.GetRange(startFrameIndex, count);
+
+        Log.Debug(
+            "SEI time-based extraction: time=[{StartS:F2}s..{EndS:F2}s], frames=[{StartF}..{EndF}], count={Count}",
+            startSeconds, startSeconds + durationSeconds,
+            startFrameIndex, endFrameIndex,
+            result.Count);
+
+        return result;
     }
 }
