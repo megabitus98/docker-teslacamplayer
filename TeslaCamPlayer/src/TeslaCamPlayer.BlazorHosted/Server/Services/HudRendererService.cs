@@ -24,12 +24,37 @@ public class HudRendererService : IHudRendererService
         int height,
         double frameRate,
         bool useMph,
+        string locationStreetCity,
+        double? fallbackLat,
+        double? fallbackLon,
+        bool renderLocationOverlay,
         CancellationToken cancellationToken)
     {
-        if (seiMessages == null || seiMessages.Count == 0)
+        // Allow rendering if location data is provided (and requested), even without SEI messages
+        bool hasLocationData = renderLocationOverlay &&
+                               (!string.IsNullOrWhiteSpace(locationStreetCity) ||
+                                (fallbackLat.HasValue && fallbackLon.HasValue));
+
+        Log.Information(
+            "[LOCATION DEBUG] HudRendererService.RenderHudFramesToDirectoryAsync called: seiMessages={SeiCount}, locationStreetCity={StreetCity}, fallbackLat={Lat}, fallbackLon={Lon}, renderLocationOverlay={RenderLocationOverlay}, hasLocationData={HasLocationData}",
+            seiMessages?.Count ?? 0,
+            locationStreetCity ?? "(null)",
+            fallbackLat?.ToString() ?? "(null)",
+            fallbackLon?.ToString() ?? "(null)",
+            renderLocationOverlay,
+            hasLocationData);
+
+        if ((seiMessages == null || seiMessages.Count == 0) && !hasLocationData)
         {
-            Log.Warning("No SEI messages to render");
+            Log.Warning("[LOCATION DEBUG] No SEI messages and no location data to render - returning null");
             return null;
+        }
+
+        // If no SEI messages but we have location data, create empty list to render location-only overlay
+        if ((seiMessages == null || seiMessages.Count == 0) && hasLocationData)
+        {
+            Log.Information("[LOCATION DEBUG] No SEI messages, but rendering location-only overlay");
+            seiMessages = new List<SeiMetadata> { null }; // Single empty frame for location overlay (no HUD telemetry)
         }
 
         Log.Information(
@@ -59,7 +84,7 @@ public class HudRendererService : IHudRendererService
             Log.Debug("Wrote SEI JSON to: {Path}", seiJsonPath);
 
             // Build Python command arguments
-            var args = BuildPythonArgumentsForDirectory(seiJsonPath, outputDirectory, width, height, frameRate, useMph);
+            var args = BuildPythonArgumentsForDirectory(seiJsonPath, outputDirectory, width, height, frameRate, useMph, locationStreetCity, fallbackLat, fallbackLon, renderLocationOverlay);
             Log.Debug("Python arguments: {Args}", args);
 
             // Start Python process
@@ -147,12 +172,37 @@ public class HudRendererService : IHudRendererService
         int height,
         double frameRate,
         bool useMph,
+        string locationStreetCity,
+        double? fallbackLat,
+        double? fallbackLon,
+        bool renderLocationOverlay,
         CancellationToken cancellationToken)
     {
-        if (seiMessages == null || seiMessages.Count == 0)
+        // Allow rendering if location data is provided, even without SEI messages
+        bool hasLocationData = renderLocationOverlay &&
+                               (!string.IsNullOrWhiteSpace(locationStreetCity) ||
+                                (fallbackLat.HasValue && fallbackLon.HasValue));
+
+        Log.Information(
+            "[LOCATION DEBUG] HudRendererService.RenderHudFramesToPipeAsync called: seiMessages={SeiCount}, locationStreetCity={StreetCity}, fallbackLat={Lat}, fallbackLon={Lon}, renderLocationOverlay={RenderLocationOverlay}, hasLocationData={HasLocationData}",
+            seiMessages?.Count ?? 0,
+            locationStreetCity ?? "(null)",
+            fallbackLat?.ToString() ?? "(null)",
+            fallbackLon?.ToString() ?? "(null)",
+            renderLocationOverlay,
+            hasLocationData);
+
+        if ((seiMessages == null || seiMessages.Count == 0) && !hasLocationData)
         {
-            Log.Warning("No SEI messages to render");
+            Log.Warning("[LOCATION DEBUG] No SEI messages and no location data to render - returning");
             return;
+        }
+
+        // If no SEI messages but we have location data, create empty list to render location-only overlay
+        if ((seiMessages == null || seiMessages.Count == 0) && hasLocationData)
+        {
+            Log.Information("[LOCATION DEBUG] No SEI messages, but rendering location-only overlay");
+            seiMessages = new List<SeiMetadata> { null }; // Single empty frame for location overlay (no HUD telemetry)
         }
 
         Log.Information(
@@ -179,7 +229,7 @@ public class HudRendererService : IHudRendererService
             Log.Debug("Wrote SEI JSON to: {Path}", seiJsonPath);
 
             // Build Python command arguments
-            var args = BuildPythonArguments(seiJsonPath, width, height, frameRate, useMph);
+            var args = BuildPythonArguments(seiJsonPath, width, height, frameRate, useMph, locationStreetCity, fallbackLat, fallbackLon, renderLocationOverlay);
             Log.Debug("Python arguments: {Args}", args);
 
             // Start Python process
@@ -274,7 +324,11 @@ public class HudRendererService : IHudRendererService
         int width,
         int height,
         double frameRate,
-        bool useMph)
+        bool useMph,
+        string locationStreetCity,
+        double? fallbackLat,
+        double? fallbackLon,
+        bool renderLocationOverlay)
     {
         var sb = new StringBuilder();
 
@@ -286,7 +340,28 @@ public class HudRendererService : IHudRendererService
         sb.Append($"--framerate {frameRate.ToString("0.##", CultureInfo.InvariantCulture)} ");
         if (useMph)
         {
-            sb.Append("--use-mph");
+            sb.Append("--use-mph ");
+        }
+
+        if (renderLocationOverlay)
+        {
+            // Add location data
+            if (!string.IsNullOrWhiteSpace(locationStreetCity))
+            {
+                sb.Append($"--location-text \"{locationStreetCity}\" ");
+            }
+
+            if (fallbackLat.HasValue)
+            {
+                sb.Append($"--fallback-lat {fallbackLat.Value.ToString("0.######", CultureInfo.InvariantCulture)} ");
+            }
+
+            if (fallbackLon.HasValue)
+            {
+                sb.Append($"--fallback-lon {fallbackLon.Value.ToString("0.######", CultureInfo.InvariantCulture)} ");
+            }
+
+            sb.Append("--enable-location-overlay ");
         }
 
         return sb.ToString();
@@ -297,7 +372,11 @@ public class HudRendererService : IHudRendererService
         int width,
         int height,
         double frameRate,
-        bool useMph)
+        bool useMph,
+        string locationStreetCity,
+        double? fallbackLat,
+        double? fallbackLon,
+        bool renderLocationOverlay)
     {
         var sb = new StringBuilder();
 
@@ -310,6 +389,28 @@ public class HudRendererService : IHudRendererService
         {
             sb.Append("--use-mph ");
         }
+
+        if (renderLocationOverlay)
+        {
+            // Add location data
+            if (!string.IsNullOrWhiteSpace(locationStreetCity))
+            {
+                sb.Append($"--location-text \"{locationStreetCity}\" ");
+            }
+
+            if (fallbackLat.HasValue)
+            {
+                sb.Append($"--fallback-lat {fallbackLat.Value.ToString("0.######", CultureInfo.InvariantCulture)} ");
+            }
+
+            if (fallbackLon.HasValue)
+            {
+                sb.Append($"--fallback-lon {fallbackLon.Value.ToString("0.######", CultureInfo.InvariantCulture)} ");
+            }
+
+            sb.Append("--enable-location-overlay ");
+        }
+
         sb.Append("--pipe");
 
         return sb.ToString();

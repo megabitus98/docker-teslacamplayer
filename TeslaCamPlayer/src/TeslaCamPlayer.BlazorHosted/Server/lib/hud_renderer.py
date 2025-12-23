@@ -37,6 +37,14 @@ AUTOPILOT_COLOR = (100, 170, 255, 230)  # Blue
 CRUISE_COLOR = (90, 160, 255, 200)
 MAX_STEER_DEG = 540
 
+# Location overlay constants (matching FFmpeg style)
+LOCATION_FONT_SIZE = 24
+LOCATION_TEXT_COLOR = (255, 255, 255, 255)  # White
+LOCATION_BG_COLOR = (0, 0, 0, 102)  # Black @ 40% opacity (0.4 * 255)
+LOCATION_PADDING = 8
+LOCATION_MARGIN_X = 10
+LOCATION_MARGIN_Y = 10
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Render HUD overlay from SEI telemetry')
     parser.add_argument('--sei-json', required=True, help='Path to SEI messages JSON file')
@@ -46,6 +54,10 @@ def parse_args():
     parser.add_argument('--use-mph', action='store_true', help='Use MPH instead of km/h')
     parser.add_argument('--output-dir', help='Output directory for PNG frames (if not using pipe)')
     parser.add_argument('--pipe', action='store_true', help='Output raw RGBA to stdout')
+    parser.add_argument('--location-text', help='Street and city text (e.g., "Main St, San Francisco")')
+    parser.add_argument('--fallback-lat', type=float, help='Fallback GPS latitude from event.json')
+    parser.add_argument('--fallback-lon', type=float, help='Fallback GPS longitude from event.json')
+    parser.add_argument('--enable-location-overlay', action='store_true', help='Render location overlay (city/GPS)')
     return parser.parse_args()
 
 def load_sei_messages(json_path):
@@ -463,7 +475,85 @@ def draw_wheel_chip(draw, x, y, angle, autopilot_state):
     wheel_img = wheel_img.resize((CHIP_SIZE, CHIP_SIZE), Image.LANCZOS)
     draw._image.paste(wheel_img, (x, y), wheel_img)
 
-def create_hud_frame(width, height, telemetry, use_mph, state=None):
+def draw_location_overlay(draw, width, height, location_text, latitude, longitude, fallback_lat, fallback_lon, font):
+    """Draw location overlay at bottom-left corner
+
+    Args:
+        location_text: Street/city text from event.json (e.g., "Main St, San Francisco")
+        latitude: SEI GPS latitude (may be None or 0.0)
+        longitude: SEI GPS longitude (may be None or 0.0)
+        fallback_lat: Fallback latitude from event.json
+        fallback_lon: Fallback longitude from event.json
+    """
+    sys.stderr.write(f"[LOCATION DEBUG] draw_location_overlay called: location_text={location_text}, latitude={latitude}, longitude={longitude}, fallback_lat={fallback_lat}, fallback_lon={fallback_lon}\n")
+    sys.stderr.flush()
+
+    # Determine which GPS to use (SEI or fallback)
+    gps_lat = latitude
+    gps_lon = longitude
+
+    # Use fallback if SEI GPS is missing or invalid
+    if gps_lat is None or gps_lon is None or (gps_lat == 0.0 and gps_lon == 0.0):
+        sys.stderr.write(f"[LOCATION DEBUG] SEI GPS invalid/missing, using fallback: fallback_lat={fallback_lat}, fallback_lon={fallback_lon}\n")
+        sys.stderr.flush()
+        gps_lat = fallback_lat
+        gps_lon = fallback_lon
+    else:
+        sys.stderr.write(f"[LOCATION DEBUG] Using SEI GPS: {gps_lat}, {gps_lon}\n")
+        sys.stderr.flush()
+
+    # Build location string
+    parts = []
+    if location_text:
+        parts.append(location_text)
+
+    # Add GPS coordinates if available
+    if gps_lat is not None and gps_lon is not None:
+        # Skip if still (0, 0) after fallback
+        if not (gps_lat == 0.0 and gps_lon == 0.0):
+            gps_text = f"{gps_lat:.5f}, {gps_lon:.5f}"  # 5 decimal places like event.json
+            if parts:
+                parts.append(f"({gps_text})")
+            else:
+                parts.append(gps_text)
+
+    # If no location data at all, skip rendering
+    if not parts:
+        sys.stderr.write("[LOCATION DEBUG] No location data to display - skipping render\n")
+        sys.stderr.flush()
+        return
+
+    full_text = " ".join(parts)
+    sys.stderr.write(f"[LOCATION DEBUG] Rendering location text: {full_text}\n")
+    sys.stderr.flush()
+
+    # Measure text
+    bbox = draw.textbbox((0, 0), full_text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    # Background box dimensions
+    box_w = text_w + LOCATION_PADDING * 2
+    box_h = text_h + LOCATION_PADDING * 2
+
+    # Position at bottom-left (matching FFmpeg location)
+    box_x = LOCATION_MARGIN_X
+    box_y = height - box_h - LOCATION_MARGIN_Y
+
+    # Draw semi-transparent black background
+    draw_rounded_rectangle(
+        draw,
+        [box_x, box_y, box_x + box_w, box_y + box_h],
+        radius=6,
+        fill=LOCATION_BG_COLOR
+    )
+
+    # Draw text
+    text_x = box_x + LOCATION_PADDING
+    text_y = box_y + LOCATION_PADDING
+    draw.text((text_x, text_y), full_text, fill=LOCATION_TEXT_COLOR, font=font)
+
+def create_hud_frame(width, height, telemetry, use_mph, state=None, enable_location_overlay=False, location_text=None, fallback_lat=None, fallback_lon=None):
     """Create a single HUD frame"""
     # Create transparent image
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -474,6 +564,7 @@ def create_hud_frame(width, height, telemetry, use_mph, state=None):
 
     # Load fonts
     font_large = load_font(34)
+    font_location = load_font(24)  # Match timestamp font size
     font_medium = load_font(20)
     font_small = load_font(11)
 
@@ -483,7 +574,15 @@ def create_hud_frame(width, height, telemetry, use_mph, state=None):
 
     # No pill background; render chips directly over video
 
-    # Parse telemetry data
+    # Extract GPS coordinates from SEI telemetry (if available)
+    latitude = pick_number(telemetry, ['latitude', 'latitudeDeg', 'latitude_deg'], None) if telemetry else None
+    longitude = pick_number(telemetry, ['longitude', 'longitudeDeg', 'longitude_deg'], None) if telemetry else None
+
+    # Draw location overlay at bottom-left (even if telemetry is None, we can use fallback GPS)
+    if enable_location_overlay:
+        draw_location_overlay(draw, width, height, location_text, latitude, longitude, fallback_lat, fallback_lon, font_location)
+
+    # Parse telemetry data for HUD rendering
     if telemetry is None:
         return img
 
@@ -550,6 +649,9 @@ def create_hud_frame(width, height, telemetry, use_mph, state=None):
 def main():
     args = parse_args()
 
+    sys.stderr.write(f"[LOCATION DEBUG] hud_renderer.py started with args: enable_location_overlay={args.enable_location_overlay}, location_text={args.location_text}, fallback_lat={args.fallback_lat}, fallback_lon={args.fallback_lon}\n")
+    sys.stderr.flush()
+
     # Load SEI messages
     messages = load_sei_messages(args.sei_json)
     total = len(messages)
@@ -559,8 +661,18 @@ def main():
     sys.stderr.flush()
 
     for i, telemetry in enumerate(messages):
-        # Create HUD frame
-        img = create_hud_frame(args.width, args.height, telemetry, args.use_mph, state)
+        # Create HUD frame with location overlay
+        img = create_hud_frame(
+            args.width,
+            args.height,
+            telemetry,
+            args.use_mph,
+            state,
+            args.enable_location_overlay,
+            args.location_text,
+            args.fallback_lat,
+            args.fallback_lon
+        )
 
         if args.pipe:
             # Output raw RGBA to stdout

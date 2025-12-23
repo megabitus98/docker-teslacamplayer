@@ -54,7 +54,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private bool _exportIncludeTimestamp = true;
     private bool _exportIncludeLabels = true;
     private bool _exportIncludeLocation = true;
-    private bool _exportIncludeSeiHud = false;
+    private bool _exportIncludeSeiHud = true;
     private string _exportJobId;
     private ExportStatus _exportStatus;
     private bool _showExportPanel;

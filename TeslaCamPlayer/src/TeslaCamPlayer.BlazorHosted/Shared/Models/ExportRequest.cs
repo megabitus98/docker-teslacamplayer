@@ -23,5 +23,5 @@ public class ExportRequest
     public bool IncludeTimestamp { get; set; } = true;
     public bool IncludeCameraLabels { get; set; } = true;
     public bool IncludeLocationOverlay { get; set; } = true;
-    public bool IncludeSeiHud { get; set; } = false;
+    public bool IncludeSeiHud { get; set; } = true;
 }

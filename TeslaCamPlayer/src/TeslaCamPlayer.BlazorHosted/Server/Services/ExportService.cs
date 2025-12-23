@@ -167,6 +167,19 @@ public class ExportService : IExportService
 
             var locationDescription = clip.Event?.GetLocationDescription();
 
+            // Extract location data for HUD renderer
+            var locationStreetCity = clip.Event?.GetStreetAndCity();
+            double? eventLat = null;
+            double? eventLon = null;
+
+            if (clip.Event != null)
+            {
+                if (double.TryParse(clip.Event.EstLat, NumberStyles.Any, CultureInfo.InvariantCulture, out var lat))
+                    eventLat = lat;
+                if (double.TryParse(clip.Event.EstLon, NumberStyles.Any, CultureInfo.InvariantCulture, out var lon))
+                    eventLon = lon;
+            }
+
             // Ensure selection is within clip bounds
             var start = request.StartTimeUtc;
             var end = request.EndTimeUtc;
@@ -338,7 +351,18 @@ public class ExportService : IExportService
             // Optional overlays (location bottom-left, timestamp bottom-right)
             string finalLabel = "stacked";
 
-            if (request.IncludeLocationOverlay)
+            // Location overlay: Use FFmpeg drawtext only when Python HUD renderer won't be invoked
+            // Python HUD renders location when location overlay is requested AND front camera exists
+            bool hasFrontCamera = byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Count > 0;
+            bool wantsLocationOverlay = request.IncludeLocationOverlay;
+            bool wantsSeiHud = request.IncludeSeiHud;
+            bool willUsePythonHud = (wantsSeiHud || wantsLocationOverlay) && hasFrontCamera;
+
+            Log.Information(
+                "[LOCATION DEBUG] IncludeLocationOverlay={IncludeLocationOverlay}, IncludeSeiHud={IncludeSeiHud}, hasFrontCamera={HasFrontCamera}, willUsePythonHud={WillUsePythonHud}",
+                wantsLocationOverlay, wantsSeiHud, hasFrontCamera, willUsePythonHud);
+
+            if (wantsLocationOverlay && !willUsePythonHud)
             {
                 var locationText = locationDescription;
                 if (!string.IsNullOrWhiteSpace(locationText))
@@ -366,16 +390,26 @@ public class ExportService : IExportService
                 finalLabel = "ts";
             }
 
-            // SEI HUD overlay (if requested)
-            if (request.IncludeSeiHud)
+            // SEI HUD and/or location overlay with live GPS
+            // Invoke HUD renderer if either SEI HUD or location overlay is requested
+            Log.Information(
+                "[LOCATION DEBUG] Checking Python HUD invocation: IncludeSeiHud={IncludeSeiHud}, IncludeLocationOverlay={IncludeLocationOverlay}",
+                wantsSeiHud, wantsLocationOverlay);
+
+            if (willUsePythonHud)
             {
+                Log.Information("[LOCATION DEBUG] Python HUD section entered - will attempt to render HUD/location");
+
+                const double seiFrameRate = 30.0; // HUD rendering frame rate
+                var exportDurationSeconds = (end - start).TotalSeconds;
+                List<SeiMetadata> hudFrames = null;
+                var hudFramesContainSei = false;
+
                 // Find front camera segment info for SEI extraction using MP4 frame timing
                 if (byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Count > 0)
                 {
-                    const double seiFrameRate = 30.0; // HUD rendering frame rate
                     var seiTimeline = new List<(double timeSeconds, SeiMetadata message)>();
                     var frontSegments = byCamera[Cameras.Front];
-                    var exportDurationSeconds = (end - start).TotalSeconds;
 
                     Log.Information(
                         "SEI HUD sync: Processing {SegmentCount} front camera segments using MP4 frame timing",
@@ -548,6 +582,10 @@ public class ExportService : IExportService
                         segmentIndex++;
                     }
 
+                    Log.Information(
+                        "[LOCATION DEBUG] SEI extraction complete: seiTimeline.Count={SeiCount}",
+                        seiTimeline.Count);
+
                     if (seiTimeline.Count > 0)
                     {
                         // Resample SEI timeline to match export FPS so HUD duration matches video duration
@@ -563,53 +601,102 @@ public class ExportService : IExportService
                             timelineDurationSeconds,
                             resampledDurationSeconds);
 
-                        // Render HUD frames to temp directory
-                        hudFramesDir = Path.Combine(exportDir, $"{jobId}_hud_frames");
-                        var useMph = _settingsProvider.Settings.SpeedUnit == "mph";
-
-                        await _hudRenderer.RenderHudFramesToDirectoryAsync(
-                            resampledSeiMessages,
-                            hudFramesDir,
-                            outW,
-                            outH,
-                            seiFrameRate,
-                            useMph,
-                            cancel);
-
-                        // Add HUD frames as FFmpeg input
-                        var hudInputIndex = globalInputIndex;
-                        argv.Add("-framerate");
-                        argv.Add(seiFrameRate.ToString("0.##", CultureInfo.InvariantCulture));
-                        argv.Add("-i");
-                        argv.Add(Path.Combine(hudFramesDir, "frame_%06d.png"));
-                        globalInputIndex++;
-
-                        // Prepare HUD stream with precise timing
-                        var hudSyncOut = "[hud_sync]";
-                        filter.Append(';')
-                              .Append($"[{hudInputIndex}:v]")
-                              .Append("fps=30,setpts=N/(30*TB)")
-                              .Append(hudSyncOut);
-
-                        // Overlay HUD on video using overlay filter with shortest option
-                        var hudOverlayOut = "[hud_overlay]";
-                        filter.Append(';')
-                              .Append('[').Append(finalLabel).Append(']')
-                              .Append(hudSyncOut)
-                              .Append("overlay=0:0:shortest=1")
-                              .Append(hudOverlayOut);
-                        finalLabel = "hud_overlay";
-
-                        Log.Information("Graphical SEI HUD overlay added to export {JobId} ({Count} frames)", jobId, resampledSeiMessages.Count);
+                        hudFramesContainSei = true;
+                        hudFrames = resampledSeiMessages;
                     }
                     else
                     {
-                        Log.Warning("No SEI metadata found in front camera for export {JobId}", jobId);
+                        Log.Warning("[LOCATION DEBUG] No SEI metadata found in front camera for export {JobId} - seiTimeline.Count=0", jobId);
+                        Log.Information(
+                            "[LOCATION DEBUG] Fallback scenario: IncludeLocationOverlay={IncludeLocationOverlay}, locationStreetCity={StreetCity}, eventLat={Lat}, eventLon={Lon}",
+                            wantsLocationOverlay,
+                            locationStreetCity ?? "(null)",
+                            eventLat?.ToString() ?? "(null)",
+                            eventLon?.ToString() ?? "(null)");
                     }
                 }
                 else
                 {
-                    Log.Warning("SEI HUD requested but no front camera available for export {JobId}", jobId);
+                    Log.Warning("[LOCATION DEBUG] SEI HUD/location requested but no front camera available for export {JobId}", jobId);
+                    Log.Information(
+                        "[LOCATION DEBUG] No front camera fallback: IncludeLocationOverlay={IncludeLocationOverlay}, willUsePythonHud={WillUsePythonHud}",
+                        wantsLocationOverlay, willUsePythonHud);
+                }
+
+                // If location overlay is requested but we have no SEI frames, synthesize placeholder frames so GPS from event.json is still shown
+                if (wantsLocationOverlay && (hudFrames == null || hudFrames.Count == 0))
+                {
+                    var placeholderCount = Math.Max(1, (int)Math.Ceiling(exportDurationSeconds * seiFrameRate));
+                    hudFrames = Enumerable.Range(0, placeholderCount)
+                                          .Select(_ => (SeiMetadata)null) // null payload -> location only
+                                          .ToList();
+
+                    Log.Information(
+                        "[LOCATION DEBUG] Synthesized {FrameCount} placeholder HUD frames for location overlay using event.json GPS (lat={Lat}, lon={Lon})",
+                        placeholderCount,
+                        eventLat?.ToString() ?? "(null)",
+                        eventLon?.ToString() ?? "(null)");
+                }
+
+                // Render HUD/location overlay if any frames are available
+                if (hudFrames != null && hudFrames.Count > 0)
+                {
+                    hudFramesDir = Path.Combine(exportDir, $"{jobId}_hud_frames");
+                    var useMph = _settingsProvider.Settings.SpeedUnit == "mph";
+
+                    // Pass location data only if overlay is enabled
+                    var streetCity = wantsLocationOverlay ? locationStreetCity : null;
+                    double? lat = null;
+                    double? lon = null;
+
+                    if (wantsLocationOverlay && !hudFramesContainSei)
+                    {
+                        lat = eventLat;
+                        lon = eventLon;
+                    }
+
+                    Log.Information(
+                        "[LOCATION DEBUG] Passing to HUD renderer: streetCity={StreetCity}, lat={Lat}, lon={Lon}, renderLocationOverlay={RenderLocationOverlay}",
+                        streetCity ?? "(null)", lat?.ToString() ?? "(null)", lon?.ToString() ?? "(null)", wantsLocationOverlay);
+
+                    await _hudRenderer.RenderHudFramesToDirectoryAsync(
+                        hudFrames,
+                        hudFramesDir,
+                        outW,
+                        outH,
+                        seiFrameRate,
+                        useMph,
+                        streetCity,
+                        lat,
+                        lon,
+                        wantsLocationOverlay,
+                        cancel);
+
+                    // Add HUD frames as FFmpeg input
+                    var hudInputIndex = globalInputIndex;
+                    argv.Add("-framerate");
+                    argv.Add(seiFrameRate.ToString("0.##", CultureInfo.InvariantCulture));
+                    argv.Add("-i");
+                    argv.Add(Path.Combine(hudFramesDir, "frame_%06d.png"));
+                    globalInputIndex++;
+
+                    // Prepare HUD stream with precise timing
+                    var hudSyncOut = "[hud_sync]";
+                    filter.Append(';')
+                          .Append($"[{hudInputIndex}:v]")
+                          .Append("fps=30,setpts=N/(30*TB)")
+                          .Append(hudSyncOut);
+
+                    // Overlay HUD on video using overlay filter with shortest option
+                    var hudOverlayOut = "[hud_overlay]";
+                    filter.Append(';')
+                          .Append('[').Append(finalLabel).Append(']')
+                          .Append(hudSyncOut)
+                          .Append("overlay=0:0:shortest=1")
+                          .Append(hudOverlayOut);
+                    finalLabel = "hud_overlay";
+
+                    Log.Information("HUD renderer output added to export {JobId} ({Count} frames)", jobId, hudFrames.Count);
                 }
             }
 

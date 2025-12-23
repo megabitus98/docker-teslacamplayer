@@ -42,7 +42,7 @@
     [Parameter] public bool IncludeTimestamp { get; set; } = true;
     [Parameter] public bool IncludeLabels { get; set; } = true;
     [Parameter] public bool IncludeLocation { get; set; } = true;
-    [Parameter] public bool IncludeSeiHud { get; set; } = false;
+    [Parameter] public bool IncludeSeiHud { get; set; } = true;
 
     public record Result(string Format, string Resolution, string Quality, bool IncludeTimestamp, bool IncludeLabels, bool IncludeLocation, bool IncludeSeiHud);
 
