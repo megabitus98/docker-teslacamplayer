@@ -692,7 +692,7 @@ public class ExportService : IExportService
                     filter.Append(';')
                           .Append('[').Append(finalLabel).Append(']')
                           .Append(hudSyncOut)
-                          .Append("overlay=0:0:shortest=1")
+                          .Append("overlay=0:0:shortest=1:format=rgb")
                           .Append(hudOverlayOut);
                     finalLabel = "hud_overlay";
 

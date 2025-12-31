@@ -228,10 +228,6 @@ def draw_rounded_rectangle(draw, xy, radius, fill=None, outline=None, width=1):
 
 def draw_chip_background(draw, box, radius=CHIP_RADIUS, fill=None, outline=None, outline_width=1):
     draw_rounded_rectangle(draw, box, radius, fill=fill, outline=outline, width=outline_width)
-    x1, y1, x2, y2 = box
-    gloss_height = max(4, int((y2 - y1) * 0.35))
-    gloss_box = [x1 + 2, y1 + 2, x2 - 2, y1 + 2 + gloss_height]
-    draw_rounded_rectangle(draw, gloss_box, max(2, radius - 4), fill=HUD_GLOSS_COLOR)
 
 def draw_blinker_chip(draw, x, y, active, direction='left', pulse=1.0):
     box = [x, y, x + CHIP_SIZE, y + CHIP_SIZE]
