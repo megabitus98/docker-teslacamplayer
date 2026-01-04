@@ -586,7 +586,7 @@ public class ExportService : IExportService
                         "[LOCATION DEBUG] SEI extraction complete: seiTimeline.Count={SeiCount}",
                         seiTimeline.Count);
 
-                    if (seiTimeline.Count > 0)
+                    if (seiTimeline.Count > 0 && wantsSeiHud)
                     {
                         // Resample SEI timeline to match export FPS so HUD duration matches video duration
                         var resampledSeiMessages = ResampleSeiMessages(seiTimeline, seiFrameRate, exportDurationSeconds);

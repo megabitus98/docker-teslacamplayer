@@ -38,6 +38,19 @@ public class ApiController : ControllerBase
         => await _clipsService.GetClipsAsync(refreshCache);
 
     [HttpGet]
+    public async Task<ClipPagedResponse> GetClipsPaged(
+        int skip = 0,
+        int take = 50,
+        [FromQuery] ClipType[]? types = null,
+        DateTime? fromDate = null,
+        DateTime? toDate = null)
+        => await _clipsService.GetClipsPagedAsync(skip, take, types, fromDate, toDate);
+
+    [HttpGet]
+    public async Task<DateTime[]> GetAvailableDates([FromQuery] ClipType[]? types = null)
+        => await _clipsService.GetAvailableDatesAsync(types);
+
+    [HttpGet]
     public RefreshStatus GetRefreshStatus()
         => _refreshProgressService.GetStatus();
 

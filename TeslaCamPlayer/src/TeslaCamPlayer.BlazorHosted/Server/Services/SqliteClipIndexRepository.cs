@@ -215,6 +215,241 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await sqliteTransaction.CommitAsync();
     }
 
+    public async Task<IReadOnlyList<EventFolderInfo>> GetDistinctEventFoldersPagedAsync(
+        int skip,
+        int take,
+        ClipType[]? clipTypes = null,
+        DateTime? fromDate = null,
+        DateTime? toDate = null)
+    {
+        await EnsureInitializedAsync();
+
+        var results = new List<EventFolderInfo>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+
+        var whereClauses = new List<string>();
+        if (clipTypes is { Length: > 0 })
+        {
+            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
+            whereClauses.Add($"clip_type IN ({typeParams})");
+            for (int i = 0; i < clipTypes.Length; i++)
+            {
+                var param = command.CreateParameter();
+                param.ParameterName = $"$type{i}";
+                param.Value = (int)clipTypes[i];
+                command.Parameters.Add(param);
+            }
+        }
+
+        if (fromDate.HasValue)
+        {
+            whereClauses.Add("start_ticks >= $fromTicks");
+            var param = command.CreateParameter();
+            param.ParameterName = "$fromTicks";
+            param.Value = fromDate.Value.Ticks;
+            command.Parameters.Add(param);
+        }
+
+        if (toDate.HasValue)
+        {
+            whereClauses.Add("start_ticks <= $toTicks");
+            var param = command.CreateParameter();
+            param.ParameterName = "$toTicks";
+            param.Value = toDate.Value.Ticks;
+            command.Parameters.Add(param);
+        }
+
+        var whereClause = whereClauses.Count > 0 ? $"WHERE {string.Join(" AND ", whereClauses)}" : "";
+
+        command.CommandText = $@"
+            SELECT event_folder, directory_path, clip_type, MAX(start_ticks) as latest_ticks
+            FROM video_files
+            {whereClause}
+            GROUP BY event_folder
+            ORDER BY latest_ticks DESC
+            LIMIT $take OFFSET $skip";
+
+        var skipParam = command.CreateParameter();
+        skipParam.ParameterName = "$skip";
+        skipParam.Value = skip;
+        command.Parameters.Add(skipParam);
+
+        var takeParam = command.CreateParameter();
+        takeParam.ParameterName = "$take";
+        takeParam.Value = take;
+        command.Parameters.Add(takeParam);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            results.Add(new EventFolderInfo
+            {
+                EventFolder = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                DirectoryPath = reader.IsDBNull(1) ? null : reader.GetString(1),
+                ClipType = (ClipType)reader.GetInt32(2),
+                LatestTicks = reader.GetInt64(3)
+            });
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<VideoFile>> LoadVideoFilesByEventFoldersAsync(IEnumerable<string> eventFolders)
+    {
+        var folderList = eventFolders?.ToList();
+        if (folderList == null || folderList.Count == 0)
+        {
+            return Array.Empty<VideoFile>();
+        }
+
+        await EnsureInitializedAsync();
+
+        var results = new List<VideoFile>();
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+
+        var folderParams = string.Join(", ", folderList.Select((_, i) => $"$folder{i}"));
+        command.CommandText = $@"
+            SELECT file_path, event_folder, clip_type, start_ticks, camera, duration_ticks
+            FROM video_files
+            WHERE event_folder IN ({folderParams})
+            ORDER BY event_folder, start_ticks";
+
+        for (int i = 0; i < folderList.Count; i++)
+        {
+            var param = command.CreateParameter();
+            param.ParameterName = $"$folder{i}";
+            param.Value = folderList[i] ?? (object)DBNull.Value;
+            command.Parameters.Add(param);
+        }
+
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var filePath = reader.GetString(0);
+            var eventFolder = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var clipType = (ClipType)reader.GetInt32(2);
+            var startTicks = reader.GetInt64(3);
+            var camera = (Cameras)reader.GetInt32(4);
+            var durationTicks = reader.GetInt64(5);
+
+            results.Add(new VideoFile
+            {
+                FilePath = filePath,
+                Url = $"/Api/Video/{Uri.EscapeDataString(filePath)}",
+                EventFolderName = eventFolder,
+                ClipType = clipType,
+                StartDate = new DateTime(startTicks),
+                Camera = camera,
+                Duration = TimeSpan.FromTicks(durationTicks)
+            });
+        }
+
+        return results;
+    }
+
+    public async Task<int> GetTotalEventCountAsync(
+        ClipType[]? clipTypes = null,
+        DateTime? fromDate = null,
+        DateTime? toDate = null)
+    {
+        await EnsureInitializedAsync();
+
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+
+        var whereClauses = new List<string>();
+        if (clipTypes is { Length: > 0 })
+        {
+            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
+            whereClauses.Add($"clip_type IN ({typeParams})");
+            for (int i = 0; i < clipTypes.Length; i++)
+            {
+                var param = command.CreateParameter();
+                param.ParameterName = $"$type{i}";
+                param.Value = (int)clipTypes[i];
+                command.Parameters.Add(param);
+            }
+        }
+
+        if (fromDate.HasValue)
+        {
+            whereClauses.Add("start_ticks >= $fromTicks");
+            var param = command.CreateParameter();
+            param.ParameterName = "$fromTicks";
+            param.Value = fromDate.Value.Ticks;
+            command.Parameters.Add(param);
+        }
+
+        if (toDate.HasValue)
+        {
+            whereClauses.Add("start_ticks <= $toTicks");
+            var param = command.CreateParameter();
+            param.ParameterName = "$toTicks";
+            param.Value = toDate.Value.Ticks;
+            command.Parameters.Add(param);
+        }
+
+        var whereClause = whereClauses.Count > 0 ? $"WHERE {string.Join(" AND ", whereClauses)}" : "";
+
+        command.CommandText = $@"
+            SELECT COUNT(DISTINCT event_folder)
+            FROM video_files
+            {whereClause}";
+
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<IReadOnlyList<DateTime>> GetAvailableDatesAsync(ClipType[]? clipTypes = null)
+    {
+        await EnsureInitializedAsync();
+
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+
+        var whereClause = "";
+        if (clipTypes is { Length: > 0 })
+        {
+            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
+            whereClause = $"WHERE clip_type IN ({typeParams})";
+            for (int i = 0; i < clipTypes.Length; i++)
+            {
+                var param = command.CreateParameter();
+                param.ParameterName = $"$type{i}";
+                param.Value = (int)clipTypes[i];
+                command.Parameters.Add(param);
+            }
+        }
+
+        // Get distinct dates by truncating ticks to day boundary
+        // SQLite doesn't have native date functions for ticks, so we compute day boundaries
+        command.CommandText = $@"
+            SELECT DISTINCT (start_ticks / 864000000000) * 864000000000 as day_ticks
+            FROM video_files
+            {whereClause}
+            ORDER BY day_ticks DESC";
+
+        var results = new List<DateTime>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var dayTicks = reader.GetInt64(0);
+            results.Add(new DateTime(dayTicks));
+        }
+
+        return results;
+    }
+
     private async Task EnsureInitializedAsync()
     {
         if (_initialized)
@@ -257,6 +492,19 @@ public class SqliteClipIndexRepository : IClipIndexRepository
                         duration_ticks INTEGER NOT NULL
                     )";
                 await command.ExecuteNonQueryAsync();
+            }
+
+            // Create indexes for pagination and filtering performance
+            await using (var indexCommand = connection.CreateCommand())
+            {
+                indexCommand.CommandText = @"
+                    CREATE INDEX IF NOT EXISTS idx_video_files_clip_type ON video_files(clip_type);
+                    CREATE INDEX IF NOT EXISTS idx_video_files_start_ticks ON video_files(start_ticks DESC);
+                    CREATE INDEX IF NOT EXISTS idx_video_files_type_date ON video_files(clip_type, start_ticks DESC);
+                    CREATE INDEX IF NOT EXISTS idx_video_files_event_folder ON video_files(event_folder);
+                    CREATE INDEX IF NOT EXISTS idx_video_files_directory_path ON video_files(directory_path);
+                ";
+                await indexCommand.ExecuteNonQueryAsync();
             }
 
             _initialized = true;

@@ -30,7 +30,7 @@
         <MudDrawerHeader>
             <MudText Typo="Typo.h6">TeslaCamPlayer</MudText>
         </MudDrawerHeader>
-        @if (_filteredclips == null)
+        @if (_isInitialLoading)
         {
             <div class="loading-screen">
                 <MudText Typo="Typo.body1" Class="mb-2">Refreshing events...</MudText>
@@ -95,31 +95,34 @@
             }
 
             <div @ref="_eventsList" class="events-list" @onscroll="EventListScrolled">
-                <Virtualize TItem="Clip" ItemSize="@EventItemHeight" Items="@_filteredclips" OverscanCount="10">
+                <Virtualize @ref="_virtualizer" TItem="Clip" ItemSize="@EventItemHeight" ItemsProvider="@LoadClipsAsync" OverscanCount="10">
                     <ItemContent>
-                        <div class="event @(_activeClip == context ? "event--active" : null)" @key="@context.EndDate"
-                             @onclick="@(() => SetActiveClip(context))">
-                            <img class="thumbnail"
-                                 src="@(!string.IsNullOrWhiteSpace(context.ThumbnailUrl) ? context.ThumbnailUrl : "/img/no-thumbnail.png")"
-                                 width="128"
-                                 height="72"
-                                 loading="lazy"
-                                 onerror="this.src='/img/no-thumbnail.png'" />
-                            <div class="details ml-2">
-                                <div class="icons">
-                                    @foreach (var icon in GetClipIcons(context))
-                                    {
-                                        <MudIcon Icon="@icon" Size="Size.Small" Class="mr-1" />
-                                    }
-                                </div>
-                                <div class="date">
-                                    @((context.Event?.Timestamp ?? context.StartDate).ToString("dd MMM yy h:mm tt"))
-                                </div>
-                                <div class="location">
-                                    @context.Event?.GetStreetAndCity()
+                        @if (context != null)
+                        {
+                            <div class="event @(_activeClip == context ? "event--active" : null)" @key="@context.EndDate"
+                                 @onclick="@(() => SetActiveClip(context))">
+                                <img class="thumbnail"
+                                     src="@(!string.IsNullOrWhiteSpace(context.ThumbnailUrl) ? context.ThumbnailUrl : "/img/no-thumbnail.png")"
+                                     width="128"
+                                     height="72"
+                                     loading="lazy"
+                                     onerror="this.src='/img/no-thumbnail.png'" />
+                                <div class="details ml-2">
+                                    <div class="icons">
+                                        @foreach (var icon in GetClipIcons(context))
+                                        {
+                                            <MudIcon Icon="@icon" Size="Size.Small" Class="mr-1" />
+                                        }
+                                    </div>
+                                    <div class="date">
+                                        @((context.Event?.Timestamp ?? context.StartDate).ToString("dd MMM yy h:mm tt"))
+                                    </div>
+                                    <div class="location">
+                                        @context.Event?.GetStreetAndCity()
+                                    </div>
                                 </div>
                             </div>
-                        </div>
+                        }
                     </ItemContent>
                     <Placeholder>
                         <div class="event">

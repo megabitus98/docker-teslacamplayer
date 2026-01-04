@@ -97,6 +97,144 @@ public partial class ClipsService : IClipsService
         return _cache;
     }
 
+    public async Task<ClipPagedResponse> GetClipsPagedAsync(
+        int skip,
+        int take,
+        ClipType[]? clipTypes = null,
+        DateTime? fromDate = null,
+        DateTime? toDate = null)
+    {
+        // Get total count for pagination
+        var totalCount = await _clipIndexRepository.GetTotalEventCountAsync(clipTypes, fromDate, toDate);
+
+        if (totalCount == 0)
+        {
+            return new ClipPagedResponse
+            {
+                Items = Array.Empty<Clip>(),
+                TotalCount = 0
+            };
+        }
+
+        // Get paginated event folders
+        var eventFolders = await _clipIndexRepository.GetDistinctEventFoldersPagedAsync(
+            skip, take, clipTypes, fromDate, toDate);
+
+        if (eventFolders.Count == 0)
+        {
+            return new ClipPagedResponse
+            {
+                Items = Array.Empty<Clip>(),
+                TotalCount = totalCount
+            };
+        }
+
+        // Load video files for those event folders
+        var folderNames = eventFolders
+            .Where(f => !string.IsNullOrEmpty(f.EventFolder))
+            .Select(f => f.EventFolder)
+            .ToList();
+
+        var videoFiles = await _clipIndexRepository.LoadVideoFilesByEventFoldersAsync(folderNames);
+
+        // Build clips from the video files
+        var clips = BuildClipsFromVideoFiles(videoFiles, eventFolders);
+
+        return new ClipPagedResponse
+        {
+            Items = clips,
+            TotalCount = totalCount
+        };
+    }
+
+    public async Task<DateTime[]> GetAvailableDatesAsync(ClipType[]? clipTypes = null)
+    {
+        var dates = await _clipIndexRepository.GetAvailableDatesAsync(clipTypes);
+        return dates.ToArray();
+    }
+
+    private Clip[] BuildClipsFromVideoFiles(
+        IReadOnlyList<VideoFile> videoFiles,
+        IReadOnlyList<EventFolderInfo> eventFolders)
+    {
+        if (videoFiles == null || videoFiles.Count == 0)
+        {
+            return Array.Empty<Clip>();
+        }
+
+        // Group video files by event folder
+        var videosByFolder = videoFiles
+            .GroupBy(v => v.EventFolderName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key ?? "", g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        // Build clips in the order of event folders (already sorted by latest date)
+        var clips = new List<Clip>(eventFolders.Count);
+        foreach (var folderInfo in eventFolders)
+        {
+            if (string.IsNullOrEmpty(folderInfo.EventFolder))
+            {
+                continue;
+            }
+
+            if (!videosByFolder.TryGetValue(folderInfo.EventFolder, out var folderVideos) || folderVideos.Count == 0)
+            {
+                continue;
+            }
+
+            var clip = BuildClipFromEventVideos(folderVideos, folderInfo.ClipType);
+            if (clip != null)
+            {
+                clips.Add(clip);
+            }
+        }
+
+        return clips.ToArray();
+    }
+
+    private Clip BuildClipFromEventVideos(List<VideoFile> eventVideoFiles, ClipType clipType)
+    {
+        if (eventVideoFiles == null || eventVideoFiles.Count == 0)
+        {
+            return null;
+        }
+
+        var segments = eventVideoFiles
+            .GroupBy(v => v.StartDate)
+            .Select(g => new ClipVideoSegment
+            {
+                StartDate = g.Key,
+                EndDate = g.Key.Add(g.First().Duration),
+                CameraFront = g.FirstOrDefault(v => v.Camera == Cameras.Front),
+                CameraLeftRepeater = g.FirstOrDefault(v => v.Camera == Cameras.LeftRepeater),
+                CameraRightRepeater = g.FirstOrDefault(v => v.Camera == Cameras.RightRepeater),
+                CameraLeftBPillar = g.FirstOrDefault(v => v.Camera == Cameras.LeftBPillar),
+                CameraRightBPillar = g.FirstOrDefault(v => v.Camera == Cameras.RightBPillar),
+                CameraBack = g.FirstOrDefault(v => v.Camera == Cameras.Back)
+            })
+            .ToArray();
+
+        var eventFolderPath = Path.GetDirectoryName(eventVideoFiles.First().FilePath);
+        if (string.IsNullOrEmpty(eventFolderPath))
+        {
+            return null;
+        }
+
+        var expectedEventJsonPath = Path.Combine(eventFolderPath, "event.json");
+        var eventInfo = TryReadEvent(expectedEventJsonPath);
+
+        var expectedEventThumbnailPath = Path.Combine(eventFolderPath, "thumb.png");
+        var thumbnailUrl = File.Exists(expectedEventThumbnailPath)
+            ? $"/Api/Thumbnail/{Uri.EscapeDataString(expectedEventThumbnailPath)}"
+            : NoThumbnailImageUrl;
+
+        return new Clip(clipType, segments)
+        {
+            DirectoryPath = eventFolderPath,
+            Event = eventInfo,
+            ThumbnailUrl = thumbnailUrl
+        };
+    }
+
     private void StartBackgroundRefreshIfNeeded()
     {
         lock (_refreshGate)

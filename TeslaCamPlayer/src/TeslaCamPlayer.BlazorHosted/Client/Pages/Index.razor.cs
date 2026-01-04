@@ -1,6 +1,7 @@
 ﻿using System;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
+using Microsoft.AspNetCore.Components.Web.Virtualization;
 using Microsoft.JSInterop;
 using MudBlazor;
 using System.Timers;
@@ -29,9 +30,15 @@ public partial class Index : ComponentBase, IAsyncDisposable
     [Inject]
     private StatusHubClient StatusHubClient { get; set; }
 
-    private Clip[] _clips;
-    private Clip[] _filteredclips;
-    private HashSet<DateTime> _eventDates;
+    // Virtualize component reference for paginated loading
+    private Virtualize<Clip> _virtualizer;
+    private int _totalClipCount;
+    private bool _isInitialLoading = true;
+
+    // Cache of loaded clips for scroll position calculation and navigation
+    private Dictionary<int, Clip> _loadedClips = new();
+
+    private HashSet<DateTime> _eventDates = new();
     private MudDatePicker _datePicker;
     private bool _setDatePickerInitialDate;
     private ElementReference _eventsList;
@@ -95,12 +102,111 @@ public partial class Index : ComponentBase, IAsyncDisposable
             _speedUnit = "kmh";
         }
 
-        await RefreshEventsAsync(false);
+        await InitializeClipsAsync();
+    }
+
+    private async ValueTask<ItemsProviderResult<Clip>> LoadClipsAsync(ItemsProviderRequest request)
+    {
+        try
+        {
+            var types = GetSelectedClipTypes();
+            var typesQuery = types.Length > 0 ? string.Join("&", types.Select(t => $"types={t}")) : "";
+            var url = $"Api/GetClipsPaged?skip={request.StartIndex}&take={request.Count}";
+            if (!string.IsNullOrEmpty(typesQuery))
+            {
+                url += "&" + typesQuery;
+            }
+
+            var response = await HttpClient.GetFromNewtonsoftJsonAsync<ClipPagedResponse>(url);
+
+            if (response == null)
+            {
+                return new ItemsProviderResult<Clip>(Array.Empty<Clip>(), 0);
+            }
+
+            _totalClipCount = response.TotalCount;
+
+            // Cache loaded clips for scroll position calculation
+            for (int i = 0; i < response.Items.Length; i++)
+            {
+                _loadedClips[request.StartIndex + i] = response.Items[i];
+            }
+
+            // Set first clip as active if none selected
+            if (_activeClip == null && response.Items.Length > 0 && request.StartIndex == 0)
+            {
+                await InvokeAsync(async () =>
+                {
+                    await SetActiveClip(response.Items[0]);
+                });
+            }
+
+            return new ItemsProviderResult<Clip>(response.Items, response.TotalCount);
+        }
+        catch (OperationCanceledException)
+        {
+            return new ItemsProviderResult<Clip>(Array.Empty<Clip>(), _totalClipCount);
+        }
+        catch
+        {
+            return new ItemsProviderResult<Clip>(Array.Empty<Clip>(), _totalClipCount);
+        }
+    }
+
+    private ClipType[] GetSelectedClipTypes()
+    {
+        var types = new List<ClipType>();
+
+        if (_eventFilter.Recent)
+            types.Add(ClipType.Recent);
+        if (_eventFilter.DashcamHonk || _eventFilter.DashcamSaved || _eventFilter.DashcamOther)
+            types.Add(ClipType.Saved);
+        if (_eventFilter.SentryObjectDetection || _eventFilter.SentryAccelerationDetection || _eventFilter.SentryOther)
+            types.Add(ClipType.Sentry);
+
+        // If all or none are selected, return empty (no filter)
+        if (types.Count == 0 || types.Count == 3)
+            return Array.Empty<ClipType>();
+
+        return types.ToArray();
+    }
+
+    private async Task InitializeClipsAsync()
+    {
+        _isInitialLoading = true;
+        _setDatePickerInitialDate = false;
+        _loadedClips.Clear();
+
+        await LoadAvailableDatesAsync();
+
+        _isInitialLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadAvailableDatesAsync()
+    {
+        try
+        {
+            var types = GetSelectedClipTypes();
+            var typesQuery = types.Length > 0 ? string.Join("&", types.Select(t => $"types={t}")) : "";
+            var url = "Api/GetAvailableDates";
+            if (!string.IsNullOrEmpty(typesQuery))
+            {
+                url += "?" + typesQuery;
+            }
+
+            var dates = await HttpClient.GetFromNewtonsoftJsonAsync<DateTime[]>(url);
+            _eventDates = dates?.ToHashSet() ?? new HashSet<DateTime>();
+        }
+        catch
+        {
+            _eventDates = new HashSet<DateTime>();
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!_setDatePickerInitialDate && _filteredclips?.Any() == true && _datePicker != null)
+        if (!_setDatePickerInitialDate && _activeClip != null && _datePicker != null)
         {
             _setDatePickerInitialDate = true;
 
@@ -109,38 +215,30 @@ public partial class Index : ComponentBase, IAsyncDisposable
             var queryParams = System.Web.HttpUtility.ParseQueryString(uri.Query);
             var eventPath = queryParams["eventPath"];
 
-            Clip clipToOpen = null;
-
             // If eventPath is provided, try to find and open that event
             if (!string.IsNullOrWhiteSpace(eventPath))
             {
-                clipToOpen = _clips?.FirstOrDefault(c => string.Equals(c.DirectoryPath, eventPath, StringComparison.OrdinalIgnoreCase));
-
+                var clipToOpen = _loadedClips.Values.FirstOrDefault(c => string.Equals(c.DirectoryPath, eventPath, StringComparison.OrdinalIgnoreCase));
+                if (clipToOpen != null)
+                {
+                    await SetActiveClip(clipToOpen);
+                }
                 // Clear the query parameter from the URL after handling it
                 NavigationManager.NavigateTo("/", replace: true);
             }
 
-            // If no specific event found or no query param, use the latest clip
-            if (clipToOpen == null)
+            if (_activeClip != null)
             {
-                clipToOpen = _filteredclips.MaxBy(c => c.EndDate)!;
+                await _datePicker.GoToDate(_activeClip.EndDate);
             }
-
-            await _datePicker.GoToDate(clipToOpen.EndDate);
-            await SetActiveClip(clipToOpen);
         }
     }
 
     private async Task RefreshEventsAsync(bool refreshCache)
     {
-        // Initialize with empty arrays to show the list immediately (even if empty)
-        // rather than showing the loading screen
-        _clips = Array.Empty<Clip>();
-        _filteredclips = Array.Empty<Clip>();
-        await Task.Delay(10);
-        await InvokeAsync(StateHasChanged);
-
         _setDatePickerInitialDate = false;
+        _loadedClips.Clear();
+        _activeClip = null;
 
         if (refreshCache)
         {
@@ -148,21 +246,20 @@ public partial class Index : ComponentBase, IAsyncDisposable
             _lastRefreshProcessed = -1;
             _lastClipsReloadUtc = DateTime.MinValue;
             _seenActiveRefresh = false;
-            await InvokeAsync(StateHasChanged);
+
+            // Trigger server-side refresh via old API (this starts background indexing)
+            _ = HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=true");
         }
 
-        _clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=" + refreshCache);
+        // Reload available dates and refresh the virtualized list
+        await LoadAvailableDatesAsync();
 
-        FilterClips();
-        await InvokeAsync(StateHasChanged);
-
-        // If we didn't explicitly request a refresh but server may be indexing in the background (first run), start polling
-        if (!refreshCache && (_clips == null || _clips.Length == 0))
+        if (_virtualizer != null)
         {
-            _lastRefreshProcessed = -1;
-            _lastClipsReloadUtc = DateTime.MinValue;
-            _seenActiveRefresh = false;
+            await _virtualizer.RefreshDataAsync();
         }
+
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task HandleRefreshStatusAsync(RefreshStatus status)
@@ -242,13 +339,17 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
         try
         {
-            var clips = await HttpClient.GetFromNewtonsoftJsonAsync<Clip[]>("Api/GetClips?refreshCache=false");
-            await InvokeAsync(() =>
+            // Reload available dates
+            await LoadAvailableDatesAsync();
+
+            // Refresh the virtualized list to pick up new data
+            if (_virtualizer != null)
             {
-                _clips = clips ?? Array.Empty<Clip>();
-                FilterClips();
-                StateHasChanged();
-            });
+                _loadedClips.Clear();
+                await _virtualizer.RefreshDataAsync();
+            }
+
+            await InvokeAsync(StateHasChanged);
         }
         catch
         {
@@ -467,8 +568,8 @@ public partial class Index : ComponentBase, IAsyncDisposable
         // Check if user clicked "Open Event" and returned an event path
         if (result != null && !result.Canceled && result.Data is string eventPath && !string.IsNullOrWhiteSpace(eventPath))
         {
-            // Find the clip by DirectoryPath
-            var clip = _clips?.FirstOrDefault(c => string.Equals(c.DirectoryPath, eventPath, StringComparison.OrdinalIgnoreCase));
+            // Find the clip by DirectoryPath in loaded clips
+            var clip = _loadedClips.Values.FirstOrDefault(c => string.Equals(c.DirectoryPath, eventPath, StringComparison.OrdinalIgnoreCase));
             if (clip != null)
             {
                 // Set the active clip and scroll to it
@@ -490,26 +591,24 @@ public partial class Index : ComponentBase, IAsyncDisposable
         }
     }
 
-    private void FilterClips()
-    {
-        _filteredclips = (_clips ??= Array.Empty<Clip>())
-            .Where(_eventFilter.IsInFilter)
-            .ToArray();
-
-        _eventDates = _filteredclips
-            .Select(c => c.StartDate.Date)
-            .Concat(_filteredclips.Select(c => c.EndDate.Date))
-            .Distinct()
-            .ToHashSet();
-    }
-
     private async Task ToggleFilter()
     {
         _showFilter = !_showFilter;
         if (_showFilter || !_filterChanged)
             return;
 
-        FilterClips();
+        // When filter closes and has changed, refresh data with new filter
+        _filterChanged = false;
+        _loadedClips.Clear();
+        _activeClip = null;
+
+        await LoadAvailableDatesAsync();
+
+        if (_virtualizer != null)
+        {
+            await _virtualizer.RefreshDataAsync();
+        }
+
         await InvokeAsync(StateHasChanged);
     }
 
@@ -530,6 +629,10 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
     private static string[] GetClipIcons(Clip clip)
     {
+        // Handle null clip
+        if (clip == null)
+            return new[] { Icons.Material.Filled.QuestionMark };
+
         // sentry_aware_object_detection
         // user_interaction_honk
         // user_interaction_dashcam_panel_save
@@ -556,7 +659,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
             _ => null
         };
 
-        if (clip.Event.Reason.StartsWith(CamEvents.SentryAwareAccelerationPrefix))
+        if (!string.IsNullOrEmpty(clip.Event.Reason) && clip.Event.Reason.StartsWith(CamEvents.SentryAwareAccelerationPrefix))
             secondIcon = Icons.Material.Filled.OpenWith;
 
         return secondIcon == null ? new[] { baseIcon } : new[] { baseIcon, secondIcon };
@@ -576,19 +679,30 @@ public partial class Index : ComponentBase, IAsyncDisposable
         if (!pickedDate.HasValue || _ignoreDatePicked == pickedDate)
             return;
 
-        var firstClipAtDate = _filteredclips.FirstOrDefault(c => c.StartDate.Date == pickedDate);
-        if (firstClipAtDate == null)
-            return;
-
-        await SetActiveClip(firstClipAtDate);
-        await ScrollListToActiveClip();
+        // Find a loaded clip at this date, or try to load one
+        var firstClipAtDate = _loadedClips.Values.FirstOrDefault(c => c.StartDate.Date == pickedDate);
+        if (firstClipAtDate != null)
+        {
+            await SetActiveClip(firstClipAtDate);
+            await ScrollListToActiveClip();
+        }
         await Task.Delay(500);
     }
 
     private async Task ScrollListToActiveClip()
     {
+        if (_activeClip == null)
+            return;
+
+        // Find index in loaded clips
+        var index = _loadedClips.FirstOrDefault(kvp => kvp.Value == _activeClip).Key;
+        if (index == 0 && _loadedClips.Count > 0 && _loadedClips.Values.First() != _activeClip)
+        {
+            // Active clip not found in loaded clips, can't scroll to it
+            return;
+        }
+
         var listBoundingRect = await _eventsList.MudGetBoundingClientRectAsync();
-        var index = Array.IndexOf(_filteredclips, _activeClip);
         var top = (int)(index * EventItemHeight - listBoundingRect.Height / 2 + EventItemHeight / 2);
 
         await JsRuntime.InvokeVoidAsync("HTMLElement.prototype.scrollTo.call", _eventsList, new ScrollToOptions
@@ -614,26 +728,40 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
     private async void ScrollDebounceTimerTick(object _, ElapsedEventArgs __)
     {
-        var scrollTop = await JsRuntime.InvokeAsync<double>("getProperty", _eventsList, "scrollTop");
-        var listBoundingRect = await _eventsList.MudGetBoundingClientRectAsync();
-        var centerScrollPosition = scrollTop + listBoundingRect.Height / 2 + EventItemHeight / 2;
-        var itemIndex = (int)centerScrollPosition / EventItemHeight;
-        var atClip = _filteredclips.ElementAt(Math.Min(_filteredclips.Length - 1, itemIndex));
+        try
+        {
+            var scrollTop = await JsRuntime.InvokeAsync<double>("getProperty", _eventsList, "scrollTop");
+            var listBoundingRect = await _eventsList.MudGetBoundingClientRectAsync();
+            var centerScrollPosition = scrollTop + listBoundingRect.Height / 2 + EventItemHeight / 2;
+            var itemIndex = (int)centerScrollPosition / EventItemHeight;
 
-        _ignoreDatePicked = atClip.StartDate.Date;
-        await _datePicker.GoToDate(atClip.StartDate.Date);
-
-        _scrollDebounceTimer.Enabled = false;
+            // Try to find the clip at this index from loaded clips
+            if (_loadedClips.TryGetValue(Math.Min(_totalClipCount - 1, itemIndex), out var atClip))
+            {
+                _ignoreDatePicked = atClip.StartDate.Date;
+                await _datePicker.GoToDate(atClip.StartDate.Date);
+            }
+        }
+        catch
+        {
+            // Ignore errors during debounce
+        }
+        finally
+        {
+            _scrollDebounceTimer.Enabled = false;
+        }
     }
 
     private async Task PreviousButtonClicked()
     {
-        // Go to an OLDER clip, so start date should be GREATER than current
-        var previous = _filteredclips
-            .OrderByDescending(c => c.StartDate)
-            .FirstOrDefault(c => c.StartDate < _activeClip.StartDate);
+        if (_activeClip == null)
+            return;
 
-        if (previous != null)
+        // Find current index and go to next one (older = higher index since sorted by date desc)
+        var currentIndex = _loadedClips.FirstOrDefault(kvp => kvp.Value == _activeClip).Key;
+        var nextIndex = currentIndex + 1;
+
+        if (_loadedClips.TryGetValue(nextIndex, out var previous))
         {
             await SetActiveClip(previous);
             await ScrollListToActiveClip();
@@ -642,12 +770,14 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
     private async Task NextButtonClicked()
     {
-        // Go to a NEWER clip, so start date should be LESS than current
-        var next = _filteredclips
-            .OrderBy(c => c.StartDate)
-            .FirstOrDefault(c => c.StartDate > _activeClip.StartDate);
+        if (_activeClip == null)
+            return;
 
-        if (next != null)
+        // Find current index and go to previous one (newer = lower index since sorted by date desc)
+        var currentIndex = _loadedClips.FirstOrDefault(kvp => kvp.Value == _activeClip).Key;
+        var prevIndex = currentIndex - 1;
+
+        if (prevIndex >= 0 && _loadedClips.TryGetValue(prevIndex, out var next))
         {
             await SetActiveClip(next);
             await ScrollListToActiveClip();
@@ -663,13 +793,14 @@ public partial class Index : ComponentBase, IAsyncDisposable
         var targetDate = _datePicker.PickerMonth.Value.AddMonths(goToNextMonth ? 1 : -1);
         var endOfMonth = targetDate.AddMonths(1);
 
-        var clipsInOrAfterTargetMonth = _filteredclips.Any(c => c.StartDate >= targetDate);
-        var clipsInOrBeforeTargetMonth = _filteredclips.Any(c => c.StartDate <= endOfMonth);
+        // Check if there are dates in the target month range using available dates
+        var hasClipsInOrAfterTargetMonth = _eventDates.Any(d => d >= targetDate);
+        var hasClipsInOrBeforeTargetMonth = _eventDates.Any(d => d <= endOfMonth);
 
-        if (goToNextMonth && !clipsInOrAfterTargetMonth)
+        if (goToNextMonth && !hasClipsInOrAfterTargetMonth)
             return;
 
-        if (!goToNextMonth && !clipsInOrBeforeTargetMonth)
+        if (!goToNextMonth && !hasClipsInOrBeforeTargetMonth)
             return;
 
         _ignoreDatePicked = targetDate;
