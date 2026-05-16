@@ -328,6 +328,8 @@ jobs:
     needs: [meta, binaries, docker-manifest]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -337,22 +339,62 @@ jobs:
       - name: List collected artifacts
         run: ls -la artifacts/
 
+      - name: Extract release notes for this tag from RELEASE_NOTES.md
+        id: notes
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          GHCR_OWNER: ${{ needs.meta.outputs.ghcr_owner }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="release-body.md"
+          # Look for "## <tag>" in RELEASE_NOTES.md and copy everything up to
+          # (but not including) the next "## " header. Tag matches either
+          # with or without leading "v".
+          if [ -f RELEASE_NOTES.md ]; then
+            awk -v tag="$TAG" -v ver="$VERSION" '
+              BEGIN { capture = 0 }
+              /^## / {
+                if (capture) { exit }
+                if ($0 == "## " tag || $0 == "## " ver || $0 == "## v" ver) {
+                  capture = 1
+                  next
+                }
+              }
+              capture { print }
+            ' RELEASE_NOTES.md > "$NOTES_FILE"
+          else
+            : > "$NOTES_FILE"
+          fi
+
+          if [ -s "$NOTES_FILE" ]; then
+            echo "Using release notes from RELEASE_NOTES.md ($(wc -l < "$NOTES_FILE") lines)."
+            echo "have_custom=true" >> "$GITHUB_OUTPUT"
+          else
+            cat > "$NOTES_FILE" <<EOF
+          ### Docker images
+
+          Multi-arch (\`linux/amd64\`, \`linux/arm64\`):
+
+          - \`docker.io/megabitus/teslacamplayer:${VERSION}\`
+          - \`ghcr.io/${GHCR_OWNER}/teslacamplayer:${VERSION}\`
+
+          ### Self-contained binaries
+
+          Each archive bundles the .NET runtime; no separate install is required. You still need \`ffmpeg\` / \`ffprobe\` on \`PATH\` (and \`python3\` + \`Pillow\` if you use the HUD renderer).
+          EOF
+            echo "No matching section in RELEASE_NOTES.md — using default template."
+            echo "have_custom=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "body_path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.meta.outputs.tag }}
           name: ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.is_prerelease }}
-          generate_release_notes: true
+          # Auto-generate "What's Changed" only when we don't have a curated body.
+          generate_release_notes: ${{ steps.notes.outputs.have_custom != 'true' }}
+          body_path: ${{ steps.notes.outputs.body_path }}
           files: artifacts/*
-          body: |
-            ### Docker images
-
-            Multi-arch (`linux/amd64`, `linux/arm64`):
-
-            - `docker.io/megabitus/teslacamplayer:${{ needs.meta.outputs.version }}`
-            - `ghcr.io/${{ needs.meta.outputs.ghcr_owner }}/teslacamplayer:${{ needs.meta.outputs.version }}`
-
-            ### Self-contained binaries
-
-            Each archive bundles the .NET runtime; no separate install is required. You still need `ffmpeg` / `ffprobe` on `PATH` (and `python3` + `Pillow` if you use the HUD renderer).
