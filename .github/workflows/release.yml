@@ -218,6 +218,12 @@ jobs:
           npm ci
           npx gulp default
 
+      - name: Restore .NET workloads
+        # Server transitively references the Blazor WASM Client project, which needs
+        # the wasm-tools workload. setup-dotnet installs only the bare SDK.
+        run: |
+          dotnet workload restore TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/TeslaCamPlayer.BlazorHosted.Server.csproj
+
       - name: Publish server (self-contained)
         shell: bash
         run: |
