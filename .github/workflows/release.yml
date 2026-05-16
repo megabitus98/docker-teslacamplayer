@@ -226,6 +226,10 @@ jobs:
 
       - name: Publish server (self-contained)
         shell: bash
+        env:
+          # Git Bash on Windows otherwise rewrites /p:... arguments into Windows paths.
+          MSYS_NO_PATHCONV: '1'
+          MSYS2_ARG_CONV_EXCL: '*'
         run: |
           dotnet publish TeslaCamPlayer/src/TeslaCamPlayer.BlazorHosted/Server/TeslaCamPlayer.BlazorHosted.Server.csproj \
             -c Release \
