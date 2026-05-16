@@ -233,7 +233,7 @@ jobs:
             --self-contained true \
             /p:EnableCompressionInSingleFile=true \
             /p:DebugType=none \
-            /p:DefineConstants="TRACE;${{ matrix.define }}" \
+            /p:DefineConstants="TRACE%3B${{ matrix.define }}" \
             /p:AssemblyVersion=${{ needs.meta.outputs.assembly_version }} \
             -o dist/${{ matrix.rid }}
 
