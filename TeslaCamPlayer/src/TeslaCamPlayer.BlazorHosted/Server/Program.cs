@@ -25,13 +25,19 @@ builder.Services.AddTransient<IMp4TimingService, Mp4TimingService>();
 builder.Services.AddHostedService<ExportCleanupService>();
 builder.Services.AddSignalR();
 #if WINDOWS
-builder.Services.AddTransient<IFfProbeService, FfProbeServiceWindows>();
+builder.Services.AddSingleton<FfProbeServiceWindows>();
+builder.Services.AddTransient<IFfProbeService>(sp =>
+    new HybridDurationProbeService(sp.GetRequiredService<FfProbeServiceWindows>()));
 builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
 #elif DOCKER
-builder.Services.AddTransient<IFfProbeService, FfProbeServiceDocker>();
+builder.Services.AddSingleton<FfProbeServiceDocker>();
+builder.Services.AddTransient<IFfProbeService>(sp =>
+    new HybridDurationProbeService(sp.GetRequiredService<FfProbeServiceDocker>()));
 builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
 #elif LINUX
-builder.Services.AddTransient<IFfProbeService, FfProbeServiceLinux>();
+builder.Services.AddSingleton<FfProbeServiceLinux>();
+builder.Services.AddTransient<IFfProbeService>(sp =>
+    new HybridDurationProbeService(sp.GetRequiredService<FfProbeServiceLinux>()));
 builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
 #endif
 

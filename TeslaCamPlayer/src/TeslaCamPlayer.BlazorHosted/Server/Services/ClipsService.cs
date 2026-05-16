@@ -28,8 +28,11 @@ public partial class ClipsService : IClipsService
     private readonly IClipIndexRepository _clipIndexRepository;
 
     // State for background progressive refresh
-    private readonly object _refreshGate = new();
-    private Task _refreshTask;
+    private static readonly object _refreshGate = new();
+    private static Task _refreshTask;
+    private static RefreshMode? _pendingFullRefresh;
+
+    private enum RefreshMode { Incremental, Full }
 
     public ClipsService(
         ISettingsProvider settingsProvider,
@@ -41,7 +44,9 @@ public partial class ClipsService : IClipsService
         _ffProbeService = ffProbeService;
         _refreshProgressService = refreshProgressService;
         _clipIndexRepository = clipIndexRepository;
-        // limit the number of ffprobe instances to how many cores we have, otherwise... BOOM!
+        // Native MP4 mvhd parsing reads ~256 KiB from each file. On spinning-disk arrays, more
+        // concurrent random reads cause head thrashing rather than parallelism — match
+        // ProcessorCount, which empirically balances CPU-bound parse work and disk seek pressure.
         int semaphoreCount = Environment.ProcessorCount;
         _ffprobeSemaphore = new SemaphoreSlim(semaphoreCount);
     }
@@ -89,8 +94,12 @@ public partial class ClipsService : IClipsService
         if (!refreshCache && _cache != null)
             return _cache;
 
-        // When there is no cache yet (first run) or refresh is requested, start background refresh
-        StartBackgroundRefreshIfNeeded();
+        // Incremental is a fast pass that only adds files newer than the latest in the DB.
+        // When the DB is empty, it has nothing to skip past — the queued full refresh handles
+        // the initial population. Running both on cold start would full-refresh twice.
+        if (_cache is { Length: > 0 })
+            StartBackgroundRefreshIfNeeded(RefreshMode.Incremental);
+        StartBackgroundRefreshIfNeeded(RefreshMode.Full);
 
         // Ensure we always return a non-null array for the first paint
         _cache ??= Array.Empty<Clip>();
@@ -240,112 +249,241 @@ public partial class ClipsService : IClipsService
         };
     }
 
-    private void StartBackgroundRefreshIfNeeded()
+    private void StartBackgroundRefreshIfNeeded(RefreshMode mode)
     {
         lock (_refreshGate)
         {
+            if (mode == RefreshMode.Full)
+            {
+                _pendingFullRefresh = RefreshMode.Full;
+            }
+
             if (_refreshTask != null && !_refreshTask.IsCompleted)
                 return;
 
-            _refreshTask = Task.Run(async () => await RefreshCacheWorkerAsync());
+            var effectiveMode = _pendingFullRefresh.HasValue && mode != RefreshMode.Full
+                ? mode // run the requested mode first, full will follow
+                : (_pendingFullRefresh ?? mode);
+
+            if (effectiveMode == RefreshMode.Full)
+                _pendingFullRefresh = null;
+
+            _refreshTask = Task.Run(async () =>
+            {
+                await RefreshCacheWorkerAsync(effectiveMode);
+
+                // After completion, check if a full refresh was queued
+                lock (_refreshGate)
+                {
+                    if (_pendingFullRefresh.HasValue)
+                    {
+                        var pending = _pendingFullRefresh.Value;
+                        _pendingFullRefresh = null;
+                        _refreshTask = Task.Run(async () => await RefreshCacheWorkerAsync(pending));
+                    }
+                }
+            });
         }
     }
 
-    private async Task RefreshCacheWorkerAsync()
+    private async Task RefreshCacheWorkerAsync(RefreshMode mode)
     {
         try
         {
-            var stopwatch = Stopwatch.StartNew();
-            var settings = _settingsProvider.Settings;
-            var initialBatchSize = Math.Max(settings.IndexingBatchSize, settings.IndexingMinBatchSize);
-            var minBatchSize = Math.Max(1, settings.IndexingMinBatchSize);
-
-            var existing = _cache ?? Array.Empty<Clip>();
-            var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
-            foreach (var video in existing
-                         .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
-                         .Where(v => v != null))
+            if (mode == RefreshMode.Incremental)
             {
-                knownVideoFiles[video.FilePath] = video;
+                await RefreshIncrementalAsync();
             }
-
-            // Snapshot candidate paths to avoid drift between initial count and processing
-            var candidatePaths = EnumerateCandidatePaths(settings).ToList();
-            var totalCandidates = candidatePaths.Count;
-            Log.Information(
-                "Event indexing started with {CandidateCount} candidate video files. Target batch size {BatchSize}, minimum batch size {MinBatchSize}, memory threshold {MemoryThreshold:P2}.",
-                totalCandidates,
-                initialBatchSize,
-                minBatchSize,
-                settings.IndexingMaxMemoryUtilization);
-
-            await _clipIndexRepository.ResetAsync();
-
-            _refreshProgressService.Start(totalCandidates);
-
-            var aggregatedResults = new List<VideoFile>();
-            var pendingPaths = new List<string>(initialBatchSize);
-            var currentBatchSize = initialBatchSize;
-            var batchNumber = 0;
-
-            foreach (var path in candidatePaths)
+            else
             {
-                pendingPaths.Add(path);
-
-                while (pendingPaths.Count >= currentBatchSize)
-                {
-                    batchNumber++;
-                    currentBatchSize = await ExecuteBatchAsync(
-                        batchNumber,
-                        pendingPaths,
-                        currentBatchSize,
-                        minBatchSize,
-                        knownVideoFiles,
-                        aggregatedResults,
-                        settings,
-                        CancellationToken.None);
-                }
+                await RefreshFullAsync();
             }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Event indexing ({Mode}) failed with an unhandled exception.", mode);
+        }
+        finally
+        {
+            _refreshProgressService.Complete();
+        }
+    }
 
-            if (pendingPaths.Count > 0)
+    private async Task RefreshIncrementalAsync()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var settings = _settingsProvider.Settings;
+
+        var maxTicks = await _clipIndexRepository.GetMaxStartTicksAsync();
+        if (!maxTicks.HasValue)
+        {
+            // GetClipsAsync skips Incremental on cold start, but stay defensive in case some
+            // other caller triggers it without a queued Full behind it.
+            Log.Information("Incremental refresh: no existing data in database; deferring to full refresh.");
+            return;
+        }
+
+        var cutoff = new DateTime(maxTicks.Value).AddHours(-1);
+        Log.Information("Incremental refresh: scanning for events since {Cutoff}.", cutoff);
+
+        var existing = _cache ?? Array.Empty<Clip>();
+        var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var video in existing
+                     .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
+                     .Where(v => v != null))
+        {
+            knownVideoFiles[video.FilePath] = video;
+        }
+
+        var candidatePaths = EnumerateCandidatePathsSince(settings, cutoff);
+        var totalCandidates = candidatePaths.Count;
+        Log.Information("Incremental refresh: found {CandidateCount} candidate video files since {Cutoff}.", totalCandidates, cutoff);
+
+        if (totalCandidates == 0)
+        {
+            Log.Information("Incremental refresh: no new files found. Completed in {Elapsed}.", stopwatch.Elapsed);
+            return;
+        }
+
+        _refreshProgressService.Start(totalCandidates, "incremental");
+
+        var batchResults = await ProcessBatchInternalAsync(candidatePaths, knownVideoFiles);
+
+        if (batchResults.Count > 0)
+        {
+            await _clipIndexRepository.UpsertVideoFilesAsync(batchResults);
+        }
+
+        // Merge new files into the existing in-memory cache instead of re-loading the entire DB.
+        var existingVideoFiles = (_cache ?? Array.Empty<Clip>())
+            .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
+            .Where(v => v != null);
+
+        var mergedByPath = new Dictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var v in existingVideoFiles)
+            mergedByPath[v.FilePath] = v;
+        foreach (var v in batchResults)
+            mergedByPath[v.FilePath] = v;
+
+        var cache = BuildClipCache(mergedByPath.Values, knownDirectories: null, out var prunedDirectories);
+        _cache = cache;
+
+        if (prunedDirectories.Length > 0)
+        {
+            await _clipIndexRepository.RemoveByDirectoriesAsync(prunedDirectories);
+        }
+
+        stopwatch.Stop();
+        Log.Information(
+            "Incremental refresh completed in {Elapsed}. Processed {ProcessedCount} files, {NewCount} new/updated.",
+            stopwatch.Elapsed,
+            totalCandidates,
+            batchResults.Count);
+    }
+
+    private async Task RefreshFullAsync()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var settings = _settingsProvider.Settings;
+        var initialBatchSize = Math.Max(settings.IndexingBatchSize, settings.IndexingMinBatchSize);
+        var minBatchSize = Math.Max(1, settings.IndexingMinBatchSize);
+
+        var existing = _cache ?? Array.Empty<Clip>();
+        var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var video in existing
+                     .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
+                     .Where(v => v != null))
+        {
+            knownVideoFiles[video.FilePath] = video;
+        }
+
+        var candidatePaths = EnumerateCandidatePaths(settings);
+        var totalCandidates = candidatePaths.Count;
+        Log.Information(
+            "Full event indexing started with {CandidateCount} candidate video files. Target batch size {BatchSize}, minimum batch size {MinBatchSize}, memory threshold {MemoryThreshold:P2}.",
+            totalCandidates,
+            initialBatchSize,
+            minBatchSize,
+            settings.IndexingMaxMemoryUtilization);
+
+        // Get all currently indexed paths to detect stale entries later
+        var indexedPaths = await _clipIndexRepository.GetAllFilePathsAsync();
+
+        _refreshProgressService.Start(totalCandidates, "full");
+
+        var candidatePathSet = new HashSet<string>(candidatePaths, StringComparer.OrdinalIgnoreCase);
+        var aggregatedResults = new List<VideoFile>();
+        var pendingPaths = new List<string>(initialBatchSize);
+        var currentBatchSize = initialBatchSize;
+        var batchNumber = 0;
+
+        foreach (var path in candidatePaths)
+        {
+            pendingPaths.Add(path);
+
+            while (pendingPaths.Count >= currentBatchSize)
             {
                 batchNumber++;
                 currentBatchSize = await ExecuteBatchAsync(
                     batchNumber,
                     pendingPaths,
-                    Math.Min(currentBatchSize, pendingPaths.Count),
+                    currentBatchSize,
                     minBatchSize,
                     knownVideoFiles,
                     aggregatedResults,
                     settings,
                     CancellationToken.None);
             }
-
-            await UpdateCacheAsync(aggregatedResults);
-
-            stopwatch.Stop();
-
-            var totalEventCount = aggregatedResults
-                .Select(v => v?.EventFolderName)
-                .Where(name => !string.IsNullOrWhiteSpace(name))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count();
-
-            Log.Information(
-                "Event indexing completed in {Elapsed}. Indexed {VideoCount} video files across {EventCount} events using {BatchCount} batches.",
-                stopwatch.Elapsed,
-                aggregatedResults.Count,
-                totalEventCount,
-                batchNumber);
         }
-        catch (Exception ex)
+
+        if (pendingPaths.Count > 0)
         {
-            Log.Error(ex, "Event indexing failed with an unhandled exception.");
+            batchNumber++;
+            currentBatchSize = await ExecuteBatchAsync(
+                batchNumber,
+                pendingPaths,
+                Math.Min(currentBatchSize, pendingPaths.Count),
+                minBatchSize,
+                knownVideoFiles,
+                aggregatedResults,
+                settings,
+                CancellationToken.None);
         }
-        finally
+
+        // Remove stale entries (files in DB but no longer on disk)
+        var stalePaths = indexedPaths.Where(p => !candidatePathSet.Contains(p)).ToList();
+        if (stalePaths.Count > 0)
         {
-            _refreshProgressService.Complete();
+            Log.Information("Full refresh: removing {StaleCount} stale entries from database.", stalePaths.Count);
+            await _clipIndexRepository.RemoveByFilePathsAsync(stalePaths);
         }
+
+        // We just enumerated the disk — reuse those directory names instead of stat-ing every clip.
+        var knownDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in candidatePaths)
+        {
+            var dir = Path.GetDirectoryName(p);
+            if (!string.IsNullOrEmpty(dir))
+                knownDirectories.Add(NormalizeDirectoryPath(dir));
+        }
+
+        await UpdateCacheAsync(aggregatedResults, knownDirectories);
+
+        stopwatch.Stop();
+
+        var totalEventCount = aggregatedResults
+            .Select(v => v?.EventFolderName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        Log.Information(
+            "Full event indexing completed in {Elapsed}. Indexed {VideoCount} video files across {EventCount} events using {BatchCount} batches. Removed {StaleCount} stale entries.",
+            stopwatch.Elapsed,
+            aggregatedResults.Count,
+            totalEventCount,
+            batchNumber,
+            stalePaths.Count);
     }
 
     private async Task<int> ExecuteBatchAsync(
@@ -399,9 +537,8 @@ public partial class ClipsService : IClipsService
             await _clipIndexRepository.UpsertVideoFilesAsync(batchResults);
         }
 
-        await UpdateCacheAsync(aggregateResults);
-
-        PerformGarbageCollection($"post-batch {batchNumber}");
+        // Cache rebuild is deferred until the end of the refresh — rebuilding per batch is O(N²)
+        // and triggers Directory.Exists per cached event clip every time.
         var snapshotAfter = CaptureMemorySnapshot();
 
         Log.Information(
@@ -553,6 +690,92 @@ public partial class ClipsService : IClipsService
         return matched;
     }
 
+    // Matches event folder names; HH-MM-SS suffix is optional to align with FileNameRegexGenerated.
+    private static readonly Regex FolderTimestampRegex = new(
+        @"^(?<year>20\d{2})\-(?<month>[0-1][0-9])\-(?<day>[0-3][0-9])(?:_(?<hour>[0-2][0-9])(?:\-(?<minute>[0-5][0-9])(?:\-(?<second>[0-5][0-9]))?)?)?$",
+        RegexOptions.Compiled);
+
+    private static readonly Regex FileTimestampRegex = new(
+        @"(?<year>20\d{2})\-(?<month>[0-1][0-9])\-(?<day>[0-3][0-9])_(?<hour>[0-2][0-9])\-(?<minute>[0-5][0-9])\-(?<second>[0-5][0-9])\-(?:back|front|left_repeater|right_repeater|left_pillar|right_pillar|left_bpillar|right_bpillar|leftpillar|rightpillar)\.mp4$",
+        RegexOptions.Compiled);
+
+    private List<string> EnumerateCandidatePathsSince(Settings settings, DateTime cutoff)
+    {
+        var rootPath = settings.ClipsRootPath;
+        Log.Information("Incremental scan: looking for files since {Cutoff} in {ClipsRootPath}...", cutoff, rootPath);
+
+        if (!Directory.Exists(rootPath))
+        {
+            Log.Warning("ClipsRootPath does not exist: {ClipsRootPath}", rootPath);
+            return new List<string>();
+        }
+
+        var matched = new List<string>();
+        var clipTypeDirs = new[] { "SavedClips", "SentryClips", "RecentClips" };
+
+        foreach (var clipTypeDir in clipTypeDirs)
+        {
+            var clipTypePath = Path.Combine(rootPath, clipTypeDir);
+            if (!Directory.Exists(clipTypePath))
+                continue;
+
+            if (clipTypeDir == "RecentClips")
+            {
+                // RecentClips has no event subfolders — files are directly in the folder
+                foreach (var filePath in Directory.EnumerateFiles(clipTypePath, "*.mp4"))
+                {
+                    var fileName = Path.GetFileName(filePath);
+                    var fileMatch = FileTimestampRegex.Match(fileName);
+                    if (!fileMatch.Success)
+                        continue;
+
+                    var fileDate = ParseTimestampFromMatch(fileMatch);
+                    if (fileDate >= cutoff && FileNameRegex.IsMatch(filePath))
+                    {
+                        matched.Add(filePath);
+                    }
+                }
+            }
+            else
+            {
+                // SavedClips/SentryClips have event subfolders named with timestamps
+                foreach (var eventDir in Directory.EnumerateDirectories(clipTypePath))
+                {
+                    var folderName = Path.GetFileName(eventDir);
+                    var folderMatch = FolderTimestampRegex.Match(folderName);
+                    if (!folderMatch.Success)
+                        continue;
+
+                    var folderDate = ParseTimestampFromMatch(folderMatch);
+                    if (folderDate < cutoff)
+                        continue;
+
+                    foreach (var filePath in Directory.EnumerateFiles(eventDir, "*.mp4"))
+                    {
+                        if (FileNameRegex.IsMatch(filePath))
+                        {
+                            matched.Add(filePath);
+                        }
+                    }
+                }
+            }
+        }
+
+        Log.Information("Incremental scan: matched {MatchedCount} files since {Cutoff}.", matched.Count, cutoff);
+        return matched;
+    }
+
+    private static DateTime ParseTimestampFromMatch(Match match)
+    {
+        return new DateTime(
+            int.Parse(match.Groups["year"].Value),
+            int.Parse(match.Groups["month"].Value),
+            int.Parse(match.Groups["day"].Value),
+            int.Parse(match.Groups["hour"].Value),
+            int.Parse(match.Groups["minute"].Value),
+            int.Parse(match.Groups["second"].Value));
+    }
+
     private static void PerformGarbageCollection(string reason)
     {
         Log.Information("Invoking garbage collection ({Reason}).", reason);
@@ -600,11 +823,11 @@ public partial class ClipsService : IClipsService
         public double AvailableMemoryInMegabytes => BytesToMegabytes(AvailableMemoryBytes);
     }
 
-    private async Task UpdateCacheAsync(IReadOnlyCollection<VideoFile> videoFiles)
+    private async Task UpdateCacheAsync(IReadOnlyCollection<VideoFile> videoFiles, HashSet<string> knownDirectories = null)
     {
         try
         {
-            var cache = BuildClipCache(videoFiles, out var prunedDirectories);
+            var cache = BuildClipCache(videoFiles, knownDirectories, out var prunedDirectories);
             _cache = cache;
 
             if (prunedDirectories.Length > 0)
@@ -619,6 +842,9 @@ public partial class ClipsService : IClipsService
     }
 
     private Clip[] BuildClipCache(IEnumerable<VideoFile> videoFiles, out string[] prunedDirectories)
+        => BuildClipCache(videoFiles, knownDirectories: null, out prunedDirectories);
+
+    private Clip[] BuildClipCache(IEnumerable<VideoFile> videoFiles, HashSet<string> knownDirectories, out string[] prunedDirectories)
     {
         if (videoFiles == null)
         {
@@ -653,11 +879,11 @@ public partial class ClipsService : IClipsService
             .OrderByDescending(c => c.StartDate)
             .ToArray();
 
-        var sanitized = PruneMissingEventClips(combined, out prunedDirectories);
+        var sanitized = PruneMissingEventClips(combined, knownDirectories, out prunedDirectories);
         return sanitized;
     }
 
-    private Clip[] PruneMissingEventClips(Clip[] clips, out string[] removedDirectories)
+    private Clip[] PruneMissingEventClips(Clip[] clips, HashSet<string> knownDirectories, out string[] removedDirectories)
     {
         removedDirectories = Array.Empty<string>();
 
@@ -681,13 +907,25 @@ public partial class ClipsService : IClipsService
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(clip.DirectoryPath) || Directory.Exists(clip.DirectoryPath))
+            if (string.IsNullOrWhiteSpace(clip.DirectoryPath))
             {
                 filtered.Add(clip);
                 continue;
             }
 
+            // Prefer the set we just built from the disk enumeration — avoids a syscall per clip.
+            // When that's not available (initial load), fall back to a real Directory.Exists.
             var normalized = NormalizeDirectoryPath(clip.DirectoryPath);
+            var exists = knownDirectories != null
+                ? knownDirectories.Contains(normalized)
+                : Directory.Exists(clip.DirectoryPath);
+
+            if (exists)
+            {
+                filtered.Add(clip);
+                continue;
+            }
+
             if (missing.Add(normalized))
             {
                 Log.Information("Removed cached event at {DirectoryPath} because it no longer exists on disk.", clip.DirectoryPath);
@@ -918,6 +1156,9 @@ public partial class ClipsService : IClipsService
 	 * vsecond = 49
 	 * camera = front
 	 */
-    [GeneratedRegex(@"(?:[\\/]|^)(?<type>(?:Recent|Saved|Sentry)Clips)(?:[\\/](?<event>(?<year>20\d{2})\-(?<month>[0-1][0-9])\-(?<day>[0-3][0-9])_(?<hour>[0-2][0-9])\-(?<minute>[0-5][0-9])\-(?<second>[0-5][0-9])))?[\\/](?<vyear>20\d{2})\-(?<vmonth>[0-1][0-9])\-(?<vday>[0-3][0-9])_(?<vhour>[0-2][0-9])\-(?<vminute>[0-5][0-9])\-(?<vsecond>[0-5][0-9])\-(?<camera>back|front|left_repeater|right_repeater|left_pillar|right_pillar|left_bpillar|right_bpillar|leftpillar|rightpillar)\.mp4")]
+    // Event folder timestamp components after the date are optional: some Tesla firmwares emit
+    // folders like "2025-12-22" or "2025-12-22_16" without the full HH-MM-SS suffix.
+    // Mirrors the upstream fix at TylerB260/docker-teslacamplayer@1991c9c1.
+    [GeneratedRegex(@"(?:[\\/]|^)(?<type>(?:Recent|Saved|Sentry)Clips)(?:[\\/](?<event>(?<year>20\d{2})\-(?<month>[0-1][0-9])\-(?<day>[0-3][0-9])_?(?<hour>[0-2][0-9])?\-?(?<minute>[0-5][0-9])?\-?(?<second>[0-5][0-9])?))?[\\/](?<vyear>20\d{2})\-(?<vmonth>[0-1][0-9])\-(?<vday>[0-3][0-9])_(?<vhour>[0-2][0-9])\-(?<vminute>[0-5][0-9])\-(?<vsecond>[0-5][0-9])\-(?<camera>back|front|left_repeater|right_repeater|left_pillar|right_pillar|left_bpillar|right_bpillar|leftpillar|rightpillar)\.mp4")]
     private static partial Regex FileNameRegexGenerated();
 }

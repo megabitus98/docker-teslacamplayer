@@ -499,6 +499,85 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         return Convert.ToInt32(result);
     }
 
+    public async Task<long?> GetMaxStartTicksAsync()
+    {
+        await EnsureInitializedAsync();
+
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT MAX(start_ticks) FROM video_files";
+
+        var result = await command.ExecuteScalarAsync();
+        if (result is null or DBNull)
+            return null;
+
+        return Convert.ToInt64(result);
+    }
+
+    public async Task<HashSet<string>> GetAllFilePathsAsync()
+    {
+        await EnsureInitializedAsync();
+
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT file_path FROM video_files";
+
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            paths.Add(reader.GetString(0));
+        }
+
+        return paths;
+    }
+
+    public async Task RemoveByFilePathsAsync(IEnumerable<string> filePaths)
+    {
+        if (filePaths == null)
+            return;
+
+        var pathList = filePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+        if (pathList.Count == 0)
+            return;
+
+        await EnsureInitializedAsync();
+
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var sqliteTransaction = (SqliteTransaction)transaction;
+
+        // Process in chunks of 500 to stay within SQLite variable limits
+        const int chunkSize = 500;
+        for (var offset = 0; offset < pathList.Count; offset += chunkSize)
+        {
+            var chunk = pathList.Skip(offset).Take(chunkSize).ToList();
+
+            await using var command = connection.CreateCommand();
+            command.Transaction = sqliteTransaction;
+
+            var paramNames = chunk.Select((_, i) => $"$p{i}").ToList();
+            command.CommandText = $"DELETE FROM video_files WHERE file_path IN ({string.Join(", ", paramNames)})";
+
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                var param = command.CreateParameter();
+                param.ParameterName = $"$p{i}";
+                param.Value = chunk[i];
+                command.Parameters.Add(param);
+            }
+
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await sqliteTransaction.CommitAsync();
+    }
+
     private async Task EnsureInitializedAsync()
     {
         if (_initialized)
@@ -525,7 +604,14 @@ public class SqliteClipIndexRepository : IClipIndexRepository
 
             await using (var pragma = connection.CreateCommand())
             {
-                pragma.CommandText = "PRAGMA journal_mode=WAL";
+                // WAL keeps readers unblocked while writers commit. synchronous=NORMAL is safe with WAL
+                // (durability preserved on clean shutdown; risks only the last txn on a crash) and
+                // removes per-write fsync stalls during heavy indexing. cache_size=-20000 = 20 MiB.
+                pragma.CommandText =
+                    "PRAGMA journal_mode=WAL;" +
+                    "PRAGMA synchronous=NORMAL;" +
+                    "PRAGMA temp_store=MEMORY;" +
+                    "PRAGMA cache_size=-20000;";
                 await pragma.ExecuteNonQueryAsync();
             }
 

@@ -9,16 +9,20 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Services;
 
 public class RefreshProgressService : IRefreshProgressService
 {
+    // Throttle for the per-file Increment broadcasts. Start/Complete always go through immediately.
+    private static readonly TimeSpan IncrementBroadcastInterval = TimeSpan.FromMilliseconds(250);
+
     private readonly object _lock = new();
     private RefreshStatus _status = new();
     private readonly IHubContext<StatusHub> _hubContext;
+    private DateTime _lastIncrementBroadcastUtc = DateTime.MinValue;
 
     public RefreshProgressService(IHubContext<StatusHub> hubContext)
     {
         _hubContext = hubContext;
     }
 
-    public void Start(int total)
+    public void Start(int total, string phase = null)
     {
         RefreshStatus snapshot;
         lock (_lock)
@@ -27,8 +31,10 @@ public class RefreshProgressService : IRefreshProgressService
             {
                 IsRefreshing = true,
                 Total = total,
-                Processed = 0
+                Processed = 0,
+                Phase = phase
             };
+            _lastIncrementBroadcastUtc = DateTime.UtcNow;
             snapshot = CloneStatusUnsafe();
         }
 
@@ -45,7 +51,14 @@ public class RefreshProgressService : IRefreshProgressService
                 // Clamp to Total defensively to avoid UI showing >100%
                 var next = _status.Processed + 1;
                 _status.Processed = next <= _status.Total ? next : _status.Total;
-                snapshot = CloneStatusUnsafe();
+
+                var now = DateTime.UtcNow;
+                var isFinal = _status.Processed >= _status.Total;
+                if (isFinal || now - _lastIncrementBroadcastUtc >= IncrementBroadcastInterval)
+                {
+                    _lastIncrementBroadcastUtc = now;
+                    snapshot = CloneStatusUnsafe();
+                }
             }
         }
 
@@ -80,7 +93,8 @@ public class RefreshProgressService : IRefreshProgressService
         {
             IsRefreshing = _status.IsRefreshing,
             Processed = _status.Processed,
-            Total = _status.Total
+            Total = _status.Total,
+            Phase = _status.Phase
         };
 
     private void BroadcastStatus(RefreshStatus status, string reason)

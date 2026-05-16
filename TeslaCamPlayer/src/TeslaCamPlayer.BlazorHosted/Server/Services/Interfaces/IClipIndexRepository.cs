@@ -27,6 +27,10 @@ public interface IClipIndexRepository
     Task<IReadOnlyList<DateTime>> GetAvailableDatesAsync(ClipType[]? clipTypes = null);
 
     Task<int> GetEventIndexByDateAsync(DateTime date, ClipType[]? clipTypes = null);
+
+    Task<long?> GetMaxStartTicksAsync();
+    Task<HashSet<string>> GetAllFilePathsAsync();
+    Task RemoveByFilePathsAsync(IEnumerable<string> filePaths);
 }
 
 public class EventFolderInfo
