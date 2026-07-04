@@ -51,6 +51,11 @@ public partial class ClipsService : IClipsService
         _ffprobeSemaphore = new SemaphoreSlim(semaphoreCount);
     }
 
+    public void InvalidateCache()
+    {
+        _cache = null;
+    }
+
     private async Task<Clip[]> GetCachedAsync()
     {
         IReadOnlyList<VideoFile> stored;

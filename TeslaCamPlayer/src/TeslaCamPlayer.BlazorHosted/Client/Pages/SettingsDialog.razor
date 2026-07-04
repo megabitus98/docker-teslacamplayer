@@ -1,0 +1,264 @@
+@using System.Text
+@using MudBlazor
+@using Newtonsoft.Json
+@using TeslaCamPlayer.BlazorHosted.Shared.Models
+@inject HttpClient HttpClient
+
+<MudDialog Class="pa-2">
+    <DialogContent>
+        @if (IsRequiredSetup)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-4">
+                @(Settings?.SetupReason ?? "Review and save settings before using TeslaCamPlayer.")
+            </MudAlert>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(_errorMessage))
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-4">@_errorMessage</MudAlert>
+        }
+
+        <div class="d-flex flex-column" style="gap: 24px;">
+            @foreach (var (title, items) in GroupedSettings())
+            {
+                <div>
+                    <MudText Typo="Typo.overline" Class="mud-text-secondary">@title</MudText>
+                    <div class="d-flex flex-column mt-1" style="gap: 12px;">
+                        @foreach (var item in items)
+                        {
+                            <div class="d-flex align-start" style="gap: 4px;">
+                                <div class="flex-grow-1" style="min-width: 0;">
+                                    @if (item.InputType == "boolean")
+                                    {
+                                        <MudSwitch T="bool"
+                                                   Color="Color.Primary"
+                                                   Checked="@GetBoolValue(item.Key)"
+                                                   CheckedChanged="@((bool value) => SetValue(item.Key, value ? "true" : "false"))"
+                                                   Label="@item.Label" />
+                                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">@GetHelperText(item)</MudText>
+                                        @if (HasError(item))
+                                        {
+                                            <MudText Typo="Typo.caption" Color="Color.Error" Class="d-block">@GetValidationMessage(item)</MudText>
+                                        }
+                                    }
+                                    else if (item.InputType == "select")
+                                    {
+                                        <MudSelect T="string"
+                                                   Label="@item.Label"
+                                                   HelperText="@GetHelperText(item)"
+                                                   Value="@GetValue(item.Key)"
+                                                   ValueChanged="@((string value) => SetValue(item.Key, value))"
+                                                   Error="@HasError(item)"
+                                                   ErrorText="@GetValidationMessage(item)">
+                                            @foreach (var option in item.Options)
+                                            {
+                                                <MudSelectItem T="string" Value="@option">@option</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                    }
+                                    else
+                                    {
+                                        <MudTextField T="string"
+                                                      Label="@item.Label"
+                                                      HelperText="@GetHelperText(item)"
+                                                      Value="@GetValue(item.Key)"
+                                                      ValueChanged="@((string value) => SetValue(item.Key, value))"
+                                                      Error="@HasError(item)"
+                                                      ErrorText="@GetValidationMessage(item)"
+                                                      InputType="@(IsNumeric(item) ? MudBlazor.InputType.Number : MudBlazor.InputType.Text)"
+                                                      Immediate="true" />
+                                    }
+                                </div>
+
+                                <MudTooltip Arrow="true" Placement="Placement.Left" Class="mt-3">
+                                    <ChildContent>
+                                        <MudIcon Icon="@Icons.Material.Outlined.Info" Size="Size.Small" Class="mud-text-secondary" />
+                                    </ChildContent>
+                                    <TooltipContent>
+                                        <div style="text-align: left;">
+                                            <div>Env @(item.EnvVarName ?? "n/a"): @FormatValue(item.EnvValue)</div>
+                                            <div>Saved: @(_resetKeys.Contains(item.Key) ? "will reset" : FormatValue(item.SavedValue))</div>
+                                            <div>Using: @FormatValue(item.EffectiveValue) (@item.Source)</div>
+                                        </div>
+                                    </TooltipContent>
+                                </MudTooltip>
+                                <MudTooltip Text="Reset to default" Class="mt-1">
+                                    <MudIconButton Icon="@Icons.Material.Filled.SettingsBackupRestore"
+                                                   Size="Size.Small"
+                                                   Disabled="@(!_resetKeys.Contains(item.Key) && string.IsNullOrWhiteSpace(item.SavedValue))"
+                                                   OnClick="@(() => ResetValue(item))" />
+                                </MudTooltip>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" Disabled="@_saving" OnClick="@Cancel">Close</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@_saving" OnClick="@SaveAsync">
+            @(_saving ? "Saving..." : "Save")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; }
+
+    [Parameter] public AppSettingsResponse Settings { get; set; }
+    [Parameter] public bool IsRequiredSetup { get; set; }
+
+    private static readonly (string Title, string[] Keys)[] Groups =
+    {
+        ("Storage", new[] { "ClipsRootPath", "CacheDatabasePath", "ExportRootPath", "ExportRetentionHours" }),
+        ("General", new[] { "SpeedUnit", "EnableDelete" }),
+        ("Indexing", new[] { "IndexingBatchSize", "IndexingMinBatchSize", "IndexingMaxMemoryUtilization", "IndexingMemoryRecoveryDelaySeconds" })
+    };
+
+    private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _fieldErrors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _resetKeys = new(StringComparer.OrdinalIgnoreCase);
+    private bool _initialized;
+    private bool _saving;
+    private string _errorMessage;
+
+    protected override void OnParametersSet()
+    {
+        if (_initialized || Settings?.Settings == null)
+        {
+            return;
+        }
+
+        foreach (var item in Settings.Settings)
+        {
+            _values[item.Key] = item.EffectiveValue ?? item.BaselineValue ?? string.Empty;
+        }
+
+        _initialized = true;
+    }
+
+    private IEnumerable<(string Title, AppSettingItem[] Items)> GroupedSettings()
+    {
+        var all = Settings?.Settings ?? Array.Empty<AppSettingItem>();
+        var grouped = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (title, keys) in Groups)
+        {
+            var items = keys
+                .Select(key => all.FirstOrDefault(i => string.Equals(i.Key, key, StringComparison.OrdinalIgnoreCase)))
+                .OfType<AppSettingItem>()
+                .ToArray();
+
+            if (items.Length == 0)
+            {
+                continue;
+            }
+
+            foreach (var item in items)
+            {
+                grouped.Add(item.Key);
+            }
+
+            yield return (title, items);
+        }
+
+        var rest = all.Where(i => !grouped.Contains(i.Key)).ToArray();
+        if (rest.Length > 0)
+        {
+            yield return ("Other", rest);
+        }
+    }
+
+    private string GetValue(string key)
+        => _values.TryGetValue(key, out var value) ? value : string.Empty;
+
+    private bool GetBoolValue(string key)
+        => bool.TryParse(GetValue(key), out var value) && value;
+
+    private void SetValue(string key, string value)
+    {
+        _values[key] = value ?? string.Empty;
+        _resetKeys.Remove(key);
+        _fieldErrors.Remove(key);
+    }
+
+    private void ResetValue(AppSettingItem item)
+    {
+        _values[item.Key] = item.BaselineValue ?? string.Empty;
+        _resetKeys.Add(item.Key);
+        _fieldErrors.Remove(item.Key);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving || Settings?.Settings == null)
+        {
+            return;
+        }
+
+        _saving = true;
+        _errorMessage = null;
+        _fieldErrors.Clear();
+
+        var request = new SaveAppSettingsRequest
+        {
+            Values = Settings.Settings.ToDictionary(
+                item => item.Key,
+                item => _resetKeys.Contains(item.Key) ? null : GetValue(item.Key),
+                StringComparer.OrdinalIgnoreCase),
+            ResetKeys = _resetKeys.ToArray()
+        };
+
+        try
+        {
+            var json = JsonConvert.SerializeObject(request);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await HttpClient.PostAsync("Api/SaveAppSettings", content);
+            var body = await response.Content.ReadAsStringAsync();
+            var result = JsonConvert.DeserializeObject<SaveAppSettingsResponse>(body);
+
+            if (response.IsSuccessStatusCode && result?.Success == true)
+            {
+                MudDialog.Close(DialogResult.Ok(result));
+                return;
+            }
+
+            _errorMessage = result?.Message ?? "Settings could not be saved.";
+            if (result?.Errors != null)
+            {
+                foreach (var (key, value) in result.Errors)
+                {
+                    _fieldErrors[key] = value;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private string GetHelperText(AppSettingItem item)
+        => _resetKeys.Contains(item.Key) ? "Will reset to default on save." : item.Description;
+
+    private bool HasError(AppSettingItem item)
+        => !item.IsValid || _fieldErrors.ContainsKey(item.Key);
+
+    private string GetValidationMessage(AppSettingItem item)
+        => _fieldErrors.TryGetValue(item.Key, out var error)
+            ? error
+            : item.ValidationMessage;
+
+    private static bool IsNumeric(AppSettingItem item)
+        => item.InputType == "integer" || item.InputType == "decimal";
+
+    private static string FormatValue(string value)
+        => string.IsNullOrWhiteSpace(value) ? "not set" : value;
+
+    private void Cancel() => MudDialog.Cancel();
+}

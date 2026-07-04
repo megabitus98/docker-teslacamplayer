@@ -64,6 +64,8 @@ docker run \
 
 ### Environment variables
 
+These values are startup defaults. The WebUI settings dialog can override app-level settings later, and saved overrides are used until reset in the WebUI.
+
 | Variable | Example | Description |
 | --- | --- | --- |
 | ClipsRootPath | /TeslaCam | The path to the root of the clips mount in the container. This is set by default, you do not need to change it if you mount the volume to this path. |

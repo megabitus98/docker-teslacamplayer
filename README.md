@@ -117,6 +117,7 @@ services:
       - EXPORT_RETENTION_HOURS=24
       - EXPORT_ROOT_PATH=/export
       - ENABLE_DELETE=false
+      - SPEED_UNIT=kmh
     volumes:
       - path_to_appdata:/config
       - path_to_teslacam:/media
@@ -143,6 +144,12 @@ docker run -d \
 ## Export retention
 
 Exports dropped into `EXPORT_ROOT_PATH` are trimmed every hour based on `EXPORT_RETENTION_HOURS` (defaults to `24`). Set `EXPORT_RETENTION_HOURS=0` to disable automatic deletion entirely—the service logs at startup whether cleanup is active so you can confirm the setting took effect.
+
+## WebUI settings
+
+App-level environment variables are now bootstrap defaults. The WebUI prompts for settings on first run or when the clips path is invalid, and the settings button in the top bar lets you edit them later. Saved WebUI values are stored under `/config/teslacamplayer.settings.json` and take precedence over Docker environment variables until you reset that setting in the WebUI.
+
+Configurable app settings include `ClipsRootPath`, `CACHE_DATABASE_PATH`, `ENABLE_DELETE`, `SPEED_UNIT`, `EXPORT_ROOT_PATH`, `EXPORT_RETENTION_HOURS`, and the `INDEXING_*` tuning values.
 
 ## Parameters
 

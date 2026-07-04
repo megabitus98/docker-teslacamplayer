@@ -18,15 +18,9 @@ public class ApiController : ControllerBase
     private readonly IRefreshProgressService _refreshProgressService;
     private readonly IExportService _exportService;
     private readonly ISettingsProvider _settingsProvider;
-    private readonly string _rootFullPath;
-    private readonly bool _enableDelete;
-    private readonly string _speedUnit;
 
     public ApiController(ISettingsProvider settingsProvider, IClipsService clipsService, IRefreshProgressService refreshProgressService, IExportService exportService)
     {
-        _rootFullPath = Path.GetFullPath(settingsProvider.Settings.ClipsRootPath);
-        _enableDelete = settingsProvider.Settings.EnableDelete;
-        _speedUnit = settingsProvider.Settings.SpeedUnit;
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
         _refreshProgressService = refreshProgressService;
@@ -58,25 +52,81 @@ public class ApiController : ControllerBase
     public RefreshStatus GetRefreshStatus()
         => _refreshProgressService.GetStatus();
 
-    private bool IsUnderRootPath(string path)
-        => path.StartsWith(_rootFullPath);
+    private bool TryGetRootFullPath(out string rootFullPath)
+    {
+        rootFullPath = string.Empty;
+        var clipsRootPath = _settingsProvider.Settings.ClipsRootPath;
+        if (string.IsNullOrWhiteSpace(clipsRootPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            rootFullPath = EnsureTrailingSeparator(Path.GetFullPath(clipsRootPath));
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string EnsureTrailingSeparator(string path)
+        => path.EndsWith(Path.DirectorySeparatorChar)
+            ? path
+            : path + Path.DirectorySeparatorChar;
+
+    private static bool IsUnderRootPath(string path, string rootFullPath)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var rootWithoutSeparator = rootFullPath.TrimEnd(Path.DirectorySeparatorChar);
+        return fullPath.Equals(rootWithoutSeparator, StringComparison.OrdinalIgnoreCase)
+            || fullPath.StartsWith(rootFullPath, StringComparison.OrdinalIgnoreCase);
+    }
 
     [HttpGet]
     public AppConfig GetConfig()
-        => new AppConfig { EnableDelete = _enableDelete, SpeedUnit = _speedUnit };
+    {
+        var settings = _settingsProvider.Settings;
+        return new AppConfig { EnableDelete = settings.EnableDelete, SpeedUnit = settings.SpeedUnit };
+    }
+
+    [HttpGet]
+    public AppSettingsResponse GetAppSettings()
+        => _settingsProvider.GetAppSettings();
+
+    [HttpPost]
+    public IActionResult SaveAppSettings([FromBody] SaveAppSettingsRequest request)
+    {
+        var result = _settingsProvider.SaveAppSettings(request);
+        if (result.Success && result.RequiresClipRefresh)
+        {
+            _clipsService.InvalidateCache();
+        }
+
+        return result.Success ? Ok(result) : BadRequest(result);
+    }
 
     [HttpDelete]
     public IActionResult DeleteEvent(string path)
     {
-        if (!_enableDelete)
+        var settings = _settingsProvider.Settings;
+        if (!settings.EnableDelete)
             return StatusCode(403, "Delete function is disabled");
 
-        if (string.IsNullOrEmpty(path) || !IsUnderRootPath(path))
+        if (!TryGetRootFullPath(out var rootFullPath))
+            return BadRequest("Clips root path is not configured.");
+
+        if (string.IsNullOrEmpty(path))
+            return BadRequest("Invalid path");
+
+        var fullPath = Path.GetFullPath(path);
+        if (!IsUnderRootPath(fullPath, rootFullPath))
             return BadRequest("Invalid path");
 
         try
         {
-            var fullPath = Path.Combine(_rootFullPath, path);
             if (Directory.Exists(fullPath))
             {
                 Directory.Delete(fullPath, true);
@@ -105,8 +155,11 @@ public class ApiController : ControllerBase
         path += extension;
 
         path = Path.GetFullPath(path);
-        if (!IsUnderRootPath(path))
-            return BadRequest($"File must be in subdirectory under \"{_rootFullPath}\", but was \"{path}\"");
+        if (!TryGetRootFullPath(out var rootFullPath))
+            return BadRequest("Clips root path is not configured.");
+
+        if (!IsUnderRootPath(path, rootFullPath))
+            return BadRequest($"File must be in subdirectory under \"{rootFullPath}\", but was \"{path}\"");
 
         if (!System.IO.File.Exists(path))
             return NotFound();
@@ -275,7 +328,10 @@ public class ApiController : ControllerBase
 
         // Validate path is under root
         var fullPath = Path.GetFullPath(request.ClipDirectoryPath);
-        if (!IsUnderRootPath(fullPath))
+        if (!TryGetRootFullPath(out var rootFullPath))
+            return BadRequest("Clips root path is not configured.");
+
+        if (!IsUnderRootPath(fullPath, rootFullPath))
             return BadRequest("Clip path is invalid");
 
         request.ClipDirectoryPath = fullPath;

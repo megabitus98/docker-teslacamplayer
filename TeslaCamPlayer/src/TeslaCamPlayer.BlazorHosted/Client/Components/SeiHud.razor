@@ -23,28 +23,62 @@
     private IJSObjectReference _hudInstance;
     private DotNetObjectReference<SeiHud> _objRef;
     private object _currentSeiData;
+    private string _currentSpeedUnit;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            try
-            {
-                _objRef = DotNetObjectReference.Create(this);
+            await InitializeHudAsync();
+        }
+    }
 
-                // Import ES6 module for HUD interop
-                _hudModule = await JsRuntime.InvokeAsync<IJSObjectReference>(
-                    "import", "./js/dashcam/sei-hud-interop.js");
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_hudInstance == null || string.Equals(_currentSpeedUnit, SpeedUnit, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
 
-                // Initialize HUD instance
-                _hudInstance = await _hudModule.InvokeAsync<IJSObjectReference>(
-                    "initializeSeiHud", _hudContainerRef, _objRef, SpeedUnit);
-            }
-            catch (Exception ex)
+        await ReinitializeHudAsync();
+        if (_currentSeiData != null)
+        {
+            await UpdateSeiDataAsync(_currentSeiData);
+        }
+    }
+
+    private async Task InitializeHudAsync()
+    {
+        try
+        {
+            _objRef ??= DotNetObjectReference.Create(this);
+
+            _hudModule ??= await JsRuntime.InvokeAsync<IJSObjectReference>(
+                "import", "./js/dashcam/sei-hud-interop.js");
+
+            _hudInstance = await _hudModule.InvokeAsync<IJSObjectReference>(
+                "initializeSeiHud", _hudContainerRef, _objRef, SpeedUnit);
+            _currentSpeedUnit = SpeedUnit;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SEI HUD initialization failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReinitializeHudAsync()
+    {
+        try
+        {
+            if (_hudInstance != null)
             {
-                Console.WriteLine($"SEI HUD initialization failed: {ex.Message}");
+                await _hudInstance.InvokeVoidAsync("unmount");
             }
         }
+        catch { }
+
+        _hudInstance = null;
+        await InitializeHudAsync();
     }
 
     public async ValueTask UpdateSeiDataAsync(object seiData)

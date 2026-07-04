@@ -10,16 +10,14 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Services;
 
 public class ExportCleanupService : BackgroundService
 {
-    private readonly string _exportDir;
+    private readonly ISettingsProvider _settingsProvider;
     private readonly TimeSpan _interval = TimeSpan.FromHours(1);
-    private readonly Func<int> _retentionHoursProvider;
 
     public ExportCleanupService(ISettingsProvider settingsProvider)
     {
-        _exportDir = settingsProvider.Settings.ExportRootPath;
-        _retentionHoursProvider = () => settingsProvider.Settings.ExportRetentionHours;
+        _settingsProvider = settingsProvider;
 
-        var retentionHours = _retentionHoursProvider();
+        var retentionHours = _settingsProvider.Settings.ExportRetentionHours;
         if (retentionHours <= 0)
         {
             Log.Information("Export cleanup disabled; ExportRetentionHours is {Hours}.", retentionHours);
@@ -28,8 +26,6 @@ public class ExportCleanupService : BackgroundService
         {
             Log.Information("Export cleanup retention set to {Hours} hour(s).", retentionHours);
         }
-
-        try { Directory.CreateDirectory(_exportDir); } catch { }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -51,13 +47,17 @@ public class ExportCleanupService : BackgroundService
 
     private void CleanupOnce()
     {
-        if (!Directory.Exists(_exportDir)) return;
-        var retentionHours = _retentionHoursProvider();
+        var settings = _settingsProvider.Settings;
+        var exportDir = settings.ExportRootPath;
+        if (string.IsNullOrWhiteSpace(exportDir)) return;
+        if (!Directory.Exists(exportDir)) return;
+
+        var retentionHours = settings.ExportRetentionHours;
         if (retentionHours <= 0) return;
 
         var now = DateTime.UtcNow;
         var keepFor = TimeSpan.FromHours(Math.Max(1, retentionHours));
-        foreach (var file in Directory.EnumerateFiles(_exportDir))
+        foreach (var file in Directory.EnumerateFiles(exportDir))
         {
             try
             {

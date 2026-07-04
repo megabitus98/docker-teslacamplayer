@@ -4,6 +4,8 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 
 public interface IClipsService
 {
+    void InvalidateCache();
+
     Task<Clip[]> GetClipsAsync(bool refreshCache = false);
 
     Task<ClipPagedResponse> GetClipsPagedAsync(

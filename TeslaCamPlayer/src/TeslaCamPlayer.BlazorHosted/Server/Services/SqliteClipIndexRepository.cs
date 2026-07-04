@@ -12,6 +12,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
     private readonly ISettingsProvider _settingsProvider;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private bool _initialized;
+    private string _initializedDatabasePath;
 
     public SqliteClipIndexRepository(ISettingsProvider settingsProvider)
     {
@@ -580,7 +581,8 @@ public class SqliteClipIndexRepository : IClipIndexRepository
 
     private async Task EnsureInitializedAsync()
     {
-        if (_initialized)
+        var databasePath = DatabasePath;
+        if (_initialized && string.Equals(_initializedDatabasePath, databasePath, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
@@ -588,12 +590,13 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await _initializationGate.WaitAsync();
         try
         {
-            if (_initialized)
+            databasePath = DatabasePath;
+            if (_initialized && string.Equals(_initializedDatabasePath, databasePath, StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
-            var directory = Path.GetDirectoryName(DatabasePath);
+            var directory = Path.GetDirectoryName(databasePath);
             if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
@@ -643,10 +646,11 @@ public class SqliteClipIndexRepository : IClipIndexRepository
             }
 
             _initialized = true;
+            _initializedDatabasePath = databasePath;
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to initialize clip index database at {DatabasePath}", DatabasePath);
+            Log.Error(ex, "Failed to initialize clip index database at {DatabasePath}", databasePath);
             throw;
         }
         finally

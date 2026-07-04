@@ -54,6 +54,8 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private RefreshStatus _refreshStatus = new();
     private bool _enableDelete = true;
     private string _speedUnit = "kmh";
+    private AppSettingsResponse _appSettings;
+    private bool _pendingSetupDialog;
     private bool _isExportMode;
     private string _exportFormat = "mp4";
     private string _exportResolution = "original"; // or "1280x720", "1920x1080"
@@ -89,6 +91,15 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
         await StatusHubClient.EnsureConnectedAsync();
 
+        await LoadConfigAsync();
+        await LoadAppSettingsAsync();
+        _pendingSetupDialog = _appSettings?.NeedsSetup == true;
+
+        await InitializeClipsAsync();
+    }
+
+    private async Task LoadConfigAsync()
+    {
         try
         {
             var config = await HttpClient.GetFromNewtonsoftJsonAsync<AppConfig>("Api/GetConfig");
@@ -101,8 +112,18 @@ public partial class Index : ComponentBase, IAsyncDisposable
             _enableDelete = true;
             _speedUnit = "kmh";
         }
+    }
 
-        await InitializeClipsAsync();
+    private async Task LoadAppSettingsAsync()
+    {
+        try
+        {
+            _appSettings = await HttpClient.GetFromNewtonsoftJsonAsync<AppSettingsResponse>("Api/GetAppSettings");
+        }
+        catch
+        {
+            _appSettings = null;
+        }
     }
 
     private async ValueTask<ItemsProviderResult<Clip>> LoadClipsAsync(ItemsProviderRequest request)
@@ -215,6 +236,12 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender && _pendingSetupDialog)
+        {
+            _pendingSetupDialog = false;
+            await OpenSettingsDialogAsync(isRequiredSetup: true);
+        }
+
         if (!_setDatePickerInitialDate && _activeClip != null && _datePicker != null)
         {
             _setDatePickerInitialDate = true;
@@ -558,6 +585,52 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
         var dlg = DialogService.Show<ExportProgressDialog>("Export Progress", parameters, options);
         await dlg.Result; // wait until user closes
+    }
+
+    private async Task OpenSettingsDialog()
+        => await OpenSettingsDialogAsync(isRequiredSetup: false);
+
+    private async Task OpenSettingsDialogAsync(bool isRequiredSetup)
+    {
+        await LoadAppSettingsAsync();
+        if (_appSettings == null)
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            [nameof(SettingsDialog.Settings)] = _appSettings,
+            [nameof(SettingsDialog.IsRequiredSetup)] = isRequiredSetup
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true,
+            CloseButton = !isRequiredSetup,
+            DisableBackdropClick = isRequiredSetup,
+            CloseOnEscapeKey = !isRequiredSetup
+        };
+
+        var dlg = DialogService.Show<SettingsDialog>("Settings", parameters, options);
+        var result = await dlg.Result;
+        if (result == null || result.Canceled || result.Data is not SaveAppSettingsResponse saveResult)
+        {
+            return;
+        }
+
+        _appSettings = saveResult.Settings;
+        await LoadConfigAsync();
+
+        if (saveResult.RequiresClipRefresh)
+        {
+            await RefreshEventsAsync(true);
+        }
+        else
+        {
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task OpenExportHistoryDialog()

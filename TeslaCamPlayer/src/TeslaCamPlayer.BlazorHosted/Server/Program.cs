@@ -46,13 +46,14 @@ var app = builder.Build();
 var clipsRootPath = app.Services.GetService<ISettingsProvider>()!.Settings.ClipsRootPath;
 try
 {
-    if (!Directory.Exists(clipsRootPath))
-        throw new Exception("Configured clips root path doesn't exist, or no permission to access: " + clipsRootPath);
+    if (string.IsNullOrWhiteSpace(clipsRootPath) || !Directory.Exists(clipsRootPath))
+    {
+        Log.Warning("Configured clips root path doesn't exist, or no permission to access: {ClipsRootPath}. The WebUI settings dialog will prompt for configuration.", clipsRootPath);
+    }
 }
 catch (Exception e)
 {
-    Log.Fatal(e, e.Message);
-    return;
+    Log.Warning(e, "Configured clips root path could not be checked. The WebUI settings dialog will prompt for configuration.");
 }
 
 // Configure the HTTP request pipeline.

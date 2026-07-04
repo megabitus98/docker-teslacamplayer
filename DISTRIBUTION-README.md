@@ -42,7 +42,7 @@ A web-based viewer for Tesla dashcam videos with support for viewing multiple ca
 
 ## Configuration Options
 
-Edit `appsettings.json`:
+Configure these in the WebUI settings dialog, through environment variables, or in `appsettings.json`. Saved WebUI values take precedence over environment variables until reset.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
