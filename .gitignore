@@ -56,3 +56,6 @@ dist/
 
 # Local secrets (Tesla tokens for decryption)
 .env
+
+# Local design docs / specs
+docs/superpowers/
