@@ -165,6 +165,16 @@ public class ExportService : IExportService
             if (clip == null)
                 throw new InvalidOperationException("Clip not found.");
 
+            // Encrypted events index with encrypted /media paths and zero-duration segments; feeding
+            // those to ffmpeg yields a black video. Decrypt on demand (cached) and use the rebuilt
+            // clip with /config/decrypted paths and real durations, same as playback does.
+            if (clip.IsEncrypted)
+            {
+                clip = await _clipsService.PrepareEncryptedEventAsync(clip.DirectoryPath, cancel);
+                if (clip == null)
+                    throw new InvalidOperationException("Could not decrypt this event's clips for export.");
+            }
+
             var locationDescription = clip.Event?.GetLocationDescription();
 
             // Extract location data for HUD renderer

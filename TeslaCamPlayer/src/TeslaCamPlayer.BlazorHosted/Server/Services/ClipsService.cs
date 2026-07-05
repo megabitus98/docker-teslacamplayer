@@ -1191,7 +1191,10 @@ public partial class ClipsService : IClipsService
 
         return new VideoFile
         {
-            FilePath = sourcePath,
+            // Point FilePath at the decrypted, playable file (not the encrypted /media source) so
+            // server-side consumers like export feed ffmpeg readable bytes. This clip is transient
+            // (returned to the caller, never persisted to the index), so it's safe to diverge here.
+            FilePath = playablePath,
             Url = $"/Api/Video/{Uri.EscapeDataString(playablePath)}",
             EventFolderName = eventFolderName,
             ClipType = clipType,
