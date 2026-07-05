@@ -7,6 +7,51 @@ default template plus the auto-generated commit list.
 
 ---
 
+## v0.3.0
+
+Adds native decryption of **encrypted TeslaCam clips** (firmware 2026.20+)
+and a WebUI settings dialog for managing configuration without editing
+environment variables.
+
+### Highlights
+
+- **Encrypted clip decryption** — clips Tesla encrypts on newer firmware
+  (`EncryptedClips/`) are indexed with a lock badge and decrypted on
+  demand when opened, using your Tesla account. Decrypted clips are
+  cached under `/config/decrypted` (LRU-evicted, 10 GB cap by default).
+- **Tesla account connection** — connect once with a refresh token
+  (set-and-forget, auto-rotates) or paste a short-lived access token for
+  a quick try. Configure it in **Settings → Tesla account** or via
+  `TESLA_REFRESH_TOKEN` / `TESLA_ACCESS_TOKEN`.
+- **WebUI settings dialog** — manage app configuration in the browser
+  with persistent storage; environment variables still take precedence.
+  Speed-unit changes now update the SEI HUD live without a full reinit.
+- **Export supports encrypted clips** — exporting an encrypted event now
+  decrypts it first instead of producing a black video.
+
+### Compatibility
+
+No DB migration required; the existing `clips.db` is reused. Decryption
+is opt-in — without a Tesla token the app behaves exactly as before, and
+encrypted clips simply show as locked.
+
+### Artifacts
+
+- **Docker (multi-arch amd64 / arm64)**:
+  - `docker.io/megabitus/teslacamplayer:0.3.0`
+  - `ghcr.io/megabitus98/teslacamplayer:0.3.0`
+- **Windows x64**: `TeslaCamPlayer-0.3.0-Windows-x64.zip`
+- **Linux x64**: `TeslaCamPlayer-0.3.0-Linux-x64.tar.gz`
+- **Linux arm64**: `TeslaCamPlayer-0.3.0-Linux-arm64.tar.gz`
+- **macOS x64**: `TeslaCamPlayer-0.3.0-macOS-x64.tar.gz`
+- **macOS arm64**: `TeslaCamPlayer-0.3.0-macOS-arm64.tar.gz`
+
+Self-contained archives bundle the .NET runtime; you still need
+`ffmpeg` / `ffprobe` on `PATH` (and `python3` + `Pillow` if you use
+the HUD renderer).
+
+---
+
 ## v0.2.0
 
 First release after the indexing-performance overhaul. On large
