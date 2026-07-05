@@ -576,6 +576,7 @@ public class SettingsProvider : ISettingsProvider
             IndexingMaxMemoryUtilization = settings.IndexingMaxMemoryUtilization,
             IndexingMemoryRecoveryDelaySeconds = settings.IndexingMemoryRecoveryDelaySeconds,
             TeslaRefreshToken = settings.TeslaRefreshToken,
+            TeslaAccessToken = settings.TeslaAccessToken,
             DecryptedCachePath = settings.DecryptedCachePath,
             DecryptedCacheMaxGb = settings.DecryptedCacheMaxGb
         };
@@ -717,6 +718,16 @@ public class SettingsProvider : ISettingsProvider
                 new[] { "TESLA_REFRESH_TOKEN", "TeslaRefreshToken" },
                 settings => settings.TeslaRefreshToken,
                 (settings, value) => settings.TeslaRefreshToken = value,
+                ParseOptionalString,
+                isSecret: true),
+            new AppSettingDefinition(
+                nameof(Settings.TeslaAccessToken),
+                "Tesla access token (optional)",
+                "Pre-obtained bearer token used as-is until it expires (~8h, no auto-refresh). A quick-start alternative to the refresh token; leave blank if you set a refresh token.",
+                "password",
+                new[] { "TESLA_ACCESS_TOKEN", "TeslaAccessToken" },
+                settings => settings.TeslaAccessToken,
+                (settings, value) => settings.TeslaAccessToken = value,
                 ParseOptionalString,
                 isSecret: true),
             new AppSettingDefinition(

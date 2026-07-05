@@ -151,6 +151,85 @@ App-level environment variables are now bootstrap defaults. The WebUI prompts fo
 
 Configurable app settings include `ClipsRootPath`, `CACHE_DATABASE_PATH`, `ENABLE_DELETE`, `SPEED_UNIT`, `EXPORT_ROOT_PATH`, `EXPORT_RETENTION_HOURS`, and the `INDEXING_*` tuning values.
 
+## Decrypting encrypted clips (firmware 2026.20+)
+
+Newer Tesla firmware encrypts TeslaCam footage on the USB drive. TeslaCamPlayer can decrypt the
+video on the fly by calling Tesla's own decrypt endpoint — but Tesla requires an authenticated
+token to do so. You provide that token **once**; the app refreshes it forever after.
+
+Encrypted events show a lock badge. Decryption happens transparently the first time you open one,
+and the decrypted copy is cached (see [Decryption cache](#decryption-cache) below).
+
+> **Metadata caveat:** only the video decrypts off-vehicle. The per-event location/reason metadata
+> and thumbnails are wrapped for the car itself and can't be recovered, so encrypted events show a
+> generic thumbnail and no event details even after the video plays.
+
+### Getting a Tesla refresh token (recommended, one-time)
+
+The token must be minted with `scope=…offline_access` on `client_id=dashcam`. Tesla's dashcam web app
+never requests that scope, so you can't just copy a refresh token from the browser — you have to run
+the OAuth PKCE flow yourself once. The script below does it with the Python standard library only
+(no packages to install), then prints the refresh token. Save it as `get_tesla_token.py` and run
+`python3 get_tesla_token.py`:
+
+```python
+import base64, hashlib, os, json, urllib.parse, urllib.request
+
+verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+
+authorize = "https://auth.tesla.com/oauth2/v3/authorize?" + urllib.parse.urlencode({
+    "client_id": "dashcam",
+    "redirect_uri": "https://dashcam.tesla.com/callback",
+    "response_type": "code",
+    "scope": "openid profile email offline_access",
+    "state": "tdc",
+    "code_challenge": challenge,
+    "code_challenge_method": "S256",
+})
+print("1) Open this URL in a real browser, log in, and solve the captcha:\n\n   " + authorize + "\n")
+print("2) You'll land on dashcam.tesla.com/callback?code=...  Grab that URL FAST — the page starts")
+print("   its own login and rewrites the address bar within a second (look for state=tdc in the")
+print("   address bar or the DevTools Network tab).\n")
+raw = input("Paste the full callback URL (or just the code): ").strip()
+code = urllib.parse.parse_qs(urllib.parse.urlparse(raw).query).get("code", [raw])[0]
+
+req = urllib.request.Request("https://auth.tesla.com/oauth2/v3/token", data=urllib.parse.urlencode({
+    "grant_type": "authorization_code",
+    "client_id": "dashcam",
+    "code": code,
+    "code_verifier": verifier,
+    "redirect_uri": "https://dashcam.tesla.com/callback",
+}).encode())
+token = json.load(urllib.request.urlopen(req)).get("refresh_token")
+print("\nrefresh_token:\n\n" + (token or "MISSING — check the scope contains offline_access"))
+```
+
+Paste the printed `refresh_token` into **Settings → Tesla account → Tesla refresh token** in the WebUI
+(or set the `TESLA_REFRESH_TOKEN` env var). That's it — the app exchanges it for a fresh 8-hour access
+token whenever needed and persists the rotated token automatically, so you never log in again.
+
+> Refresh tokens are **single-use and rotate on every refresh**. Don't point another tool at the same
+> token — whichever refreshes last wins and the other copy dies. Tesla also expires a refresh token
+> after ~3 months of non-use or on a password reset; if that happens, re-run the script above.
+
+### Quick-start with an access token (optional, no script)
+
+If you just want to try it without the script, grab a short-lived **access token** straight from the
+browser: open [dashcam.tesla.com](https://dashcam.tesla.com), log in, open DevTools → **Network**,
+click any request to `dashcam.tesla.com/api/…`, and copy the token from its
+`Authorization: Bearer <token>` request header. Paste that into **Settings → Tesla account → Tesla
+access token** (or set `TESLA_ACCESS_TOKEN`).
+
+This bearer works as-is until it expires (~8 hours) and does **not** auto-refresh — when it lapses
+you'll need to paste a new one. Use the refresh token above for a set-and-forget setup.
+
+## Decryption cache
+
+Decrypted clips are cached under `/config/decrypted` (override with `DECRYPTED_CACHE_PATH`). The
+cache is capped at 10 GB by default (`DECRYPTED_CACHE_MAX_GB`); once over the cap, least-recently-used
+clips are evicted every 30 minutes.
+
 ## Parameters
 
 To configure the container, pass variables at runtime using the format `<external>:<internal>`. For instance, `-p 8080:80` exposes port `80` inside the container, making it accessible outside the container via the host's IP on port `8080`.

@@ -26,6 +26,7 @@ public sealed class TeslaAuthService : ITeslaAuthService
 
     private string _currentRefreshToken;
     private string _accessToken;
+    private string _seededAccessToken;
     private DateTimeOffset _expiresAt;
     private string _lastError;
     private bool _audienceOk;
@@ -36,31 +37,43 @@ public sealed class TeslaAuthService : ITeslaAuthService
         _settingsProvider = settingsProvider;
         _httpClientFactory = httpClientFactory;
 
-        // Optional dev/quick-start path: seed a pre-obtained access token (e.g. copied from the
-        // dashcam DevTools). Used until it expires; with no refresh token it simply expires.
-        var seededAccess = Environment.GetEnvironmentVariable("TESLA_ACCESS_TOKEN")?.Trim();
-        if (!string.IsNullOrEmpty(seededAccess))
-        {
-            _accessToken = seededAccess;
-            _expiresAt = ReadExpiryFromJwt(seededAccess) ?? DateTimeOffset.UtcNow.AddHours(8);
-            InspectClaims(seededAccess);
-        }
+        // Optional quick-start path: seed a pre-obtained access token (env TESLA_ACCESS_TOKEN or the
+        // Settings UI, both surface through the settings provider). Used until it expires; with no
+        // refresh token it simply expires.
+        SeedAccessToken(_settingsProvider.Settings.TeslaAccessToken?.Trim());
     }
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(_settingsProvider.Settings.TeslaRefreshToken)
+        || !string.IsNullOrWhiteSpace(_settingsProvider.Settings.TeslaAccessToken)
         || !string.IsNullOrEmpty(_accessToken);
+
+    private void SeedAccessToken(string token)
+    {
+        _seededAccessToken = token;
+        if (string.IsNullOrEmpty(token))
+            return;
+
+        _accessToken = token;
+        _expiresAt = ReadExpiryFromJwt(token) ?? DateTimeOffset.UtcNow.AddHours(8);
+        _lastError = null;
+        InspectClaims(token);
+    }
 
     public async Task<string> GetAccessTokenAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
     {
         var configured = _settingsProvider.Settings.TeslaRefreshToken?.Trim();
-        var haveSeededAccess = !string.IsNullOrEmpty(_accessToken);
-        if (string.IsNullOrEmpty(configured) && !haveSeededAccess)
+        var seededAccess = _settingsProvider.Settings.TeslaAccessToken?.Trim();
+        if (string.IsNullOrEmpty(configured) && string.IsNullOrEmpty(seededAccess) && string.IsNullOrEmpty(_accessToken))
             throw new TeslaNotConnectedException("No Tesla refresh token is configured.");
 
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            // A newly pasted access token (Settings UI) supersedes whatever we're holding.
+            if (!string.IsNullOrEmpty(seededAccess) && !string.Equals(seededAccess, _seededAccessToken, StringComparison.Ordinal))
+                SeedAccessToken(seededAccess);
+
             // The user pasted a different refresh token than the one we're holding — start over with it.
             if (!string.IsNullOrEmpty(configured) && !string.Equals(configured, _currentRefreshToken, StringComparison.Ordinal))
             {

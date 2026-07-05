@@ -21,6 +21,12 @@ public class Settings
     /// </summary>
     public string TeslaRefreshToken { get; set; }
 
+    /// <summary>
+    /// Optional pre-obtained Tesla access token (bearer). Used as-is until it expires (~8h) with no
+    /// auto-refresh — a quick-start alternative to the refresh token. Secret: masked in the WebUI.
+    /// </summary>
+    public string TeslaAccessToken { get; set; }
+
     /// <summary>Folder where decrypted copies of encrypted clips are cached (mirrors the source tree).</summary>
     public string DecryptedCachePath { get; set; }
 
