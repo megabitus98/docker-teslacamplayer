@@ -13,4 +13,17 @@ public class Settings
     public int IndexingMinBatchSize { get; set; } = 250;
     public double IndexingMaxMemoryUtilization { get; set; } = 0.85;
     public int IndexingMemoryRecoveryDelaySeconds { get; set; } = 5;
+
+    /// <summary>
+    /// Tesla OAuth refresh token (client_id=dashcam, scope includes offline_access) used to
+    /// decrypt encrypted TeslaCam clips. Secret: masked in the WebUI, never logged. Rotates
+    /// on every refresh — the auth service persists the new value back here.
+    /// </summary>
+    public string TeslaRefreshToken { get; set; }
+
+    /// <summary>Folder where decrypted copies of encrypted clips are cached (mirrors the source tree).</summary>
+    public string DecryptedCachePath { get; set; }
+
+    /// <summary>Maximum size of the decrypted-clip cache in gigabytes before LRU eviction kicks in.</summary>
+    public int DecryptedCacheMaxGb { get; set; } = 10;
 }

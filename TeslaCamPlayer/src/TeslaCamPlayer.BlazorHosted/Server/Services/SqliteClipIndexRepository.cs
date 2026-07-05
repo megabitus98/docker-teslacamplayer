@@ -44,7 +44,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await connection.OpenAsync();
 
         await using var command = connection.CreateCommand();
-        command.CommandText = @"SELECT file_path, event_folder, clip_type, start_ticks, camera, duration_ticks FROM video_files";
+        command.CommandText = @"SELECT file_path, event_folder, clip_type, start_ticks, camera, duration_ticks, is_encrypted FROM video_files";
 
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -55,6 +55,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
             var startTicks = reader.GetInt64(3);
             var camera = (Cameras)reader.GetInt32(4);
             var durationTicks = reader.GetInt64(5);
+            var isEncrypted = reader.GetInt32(6) != 0;
 
             results.Add(new VideoFile
             {
@@ -64,7 +65,8 @@ public class SqliteClipIndexRepository : IClipIndexRepository
                 ClipType = clipType,
                 StartDate = new DateTime(startTicks),
                 Camera = camera,
-                Duration = TimeSpan.FromTicks(durationTicks)
+                Duration = TimeSpan.FromTicks(durationTicks),
+                IsEncrypted = isEncrypted
             });
         }
 
@@ -112,7 +114,8 @@ public class SqliteClipIndexRepository : IClipIndexRepository
                 clip_type,
                 start_ticks,
                 camera,
-                duration_ticks)
+                duration_ticks,
+                is_encrypted)
             VALUES (
                 $file_path,
                 $directory_path,
@@ -120,14 +123,16 @@ public class SqliteClipIndexRepository : IClipIndexRepository
                 $clip_type,
                 $start_ticks,
                 $camera,
-                $duration_ticks)
+                $duration_ticks,
+                $is_encrypted)
             ON CONFLICT(file_path) DO UPDATE SET
                 directory_path = excluded.directory_path,
                 event_folder = excluded.event_folder,
                 clip_type = excluded.clip_type,
                 start_ticks = excluded.start_ticks,
                 camera = excluded.camera,
-                duration_ticks = excluded.duration_ticks";
+                duration_ticks = excluded.duration_ticks,
+                is_encrypted = excluded.is_encrypted";
 
         var filePathParam = command.CreateParameter();
         filePathParam.ParameterName = "$file_path";
@@ -157,6 +162,10 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         durationParam.ParameterName = "$duration_ticks";
         command.Parameters.Add(durationParam);
 
+        var isEncryptedParam = command.CreateParameter();
+        isEncryptedParam.ParameterName = "$is_encrypted";
+        command.Parameters.Add(isEncryptedParam);
+
         foreach (var videoFile in list)
         {
             filePathParam.Value = videoFile.FilePath;
@@ -167,6 +176,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
             startTicksParam.Value = videoFile.StartDate.Ticks;
             cameraParam.Value = (int)videoFile.Camera;
             durationParam.Value = videoFile.Duration.Ticks;
+            isEncryptedParam.Value = videoFile.IsEncrypted ? 1 : 0;
 
             await command.ExecuteNonQueryAsync();
         }
@@ -316,7 +326,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
 
         var folderParams = string.Join(", ", folderList.Select((_, i) => $"$folder{i}"));
         command.CommandText = $@"
-            SELECT file_path, event_folder, clip_type, start_ticks, camera, duration_ticks
+            SELECT file_path, event_folder, clip_type, start_ticks, camera, duration_ticks, is_encrypted
             FROM video_files
             WHERE event_folder IN ({folderParams})
             ORDER BY event_folder, start_ticks";
@@ -338,6 +348,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
             var startTicks = reader.GetInt64(3);
             var camera = (Cameras)reader.GetInt32(4);
             var durationTicks = reader.GetInt64(5);
+            var isEncrypted = reader.GetInt32(6) != 0;
 
             results.Add(new VideoFile
             {
@@ -347,7 +358,8 @@ public class SqliteClipIndexRepository : IClipIndexRepository
                 ClipType = clipType,
                 StartDate = new DateTime(startTicks),
                 Camera = camera,
-                Duration = TimeSpan.FromTicks(durationTicks)
+                Duration = TimeSpan.FromTicks(durationTicks),
+                IsEncrypted = isEncrypted
             });
         }
 
@@ -627,10 +639,14 @@ public class SqliteClipIndexRepository : IClipIndexRepository
                         clip_type INTEGER NOT NULL,
                         start_ticks INTEGER NOT NULL,
                         camera INTEGER NOT NULL,
-                        duration_ticks INTEGER NOT NULL
+                        duration_ticks INTEGER NOT NULL,
+                        is_encrypted INTEGER NOT NULL DEFAULT 0
                     )";
                 await command.ExecuteNonQueryAsync();
             }
+
+            // Migrate databases created before the is_encrypted column existed.
+            await EnsureColumnAsync(connection, "video_files", "is_encrypted", "INTEGER NOT NULL DEFAULT 0");
 
             // Create indexes for pagination and filtering performance
             await using (var indexCommand = connection.CreateCommand())
@@ -657,6 +673,26 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         {
             _initializationGate.Release();
         }
+    }
+
+    private static async Task EnsureColumnAsync(SqliteConnection connection, string table, string column, string definition)
+    {
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = $"PRAGMA table_info({table})";
+        await using (var reader = await pragma.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+        }
+
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition}";
+        await alter.ExecuteNonQueryAsync();
     }
 
     private static string NormalizeDirectory(string path)

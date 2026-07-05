@@ -105,12 +105,20 @@
                             <div class="event @(_activeClip?.DirectoryPath == context.DirectoryPath ? "event--active" : null)" @key="@context.DirectoryPath"
                                  style="height: 82px; box-sizing: border-box; overflow: hidden; margin: 0; padding: 5px;"
                                  @onclick="@(() => SetActiveClip(context))">
-                                <img class="thumbnail"
-                                     src="@(!string.IsNullOrWhiteSpace(context.ThumbnailUrl) ? context.ThumbnailUrl : "/img/no-thumbnail.png")"
-                                     width="128"
-                                     height="72"
-                                     loading="lazy"
-                                     onerror="this.src='/img/no-thumbnail.png'" />
+                                <div style="position: relative; width: 128px; height: 72px; flex: 0 0 auto;">
+                                    <img class="thumbnail"
+                                         src="@(!string.IsNullOrWhiteSpace(context.ThumbnailUrl) ? context.ThumbnailUrl : "/img/no-thumbnail.png")"
+                                         width="128"
+                                         height="72"
+                                         loading="lazy"
+                                         onerror="this.src='/img/no-thumbnail.png'" />
+                                    @if (context.IsEncrypted)
+                                    {
+                                        <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); border-radius: 4px;">
+                                            <MudIcon Icon="@Icons.Material.Filled.Lock" Style="color: #fff;" Size="Size.Medium" />
+                                        </div>
+                                    }
+                                </div>
                                 <div class="details ml-2">
                                     <div class="icons">
                                         @foreach (var icon in GetClipIcons(context))
@@ -155,6 +163,13 @@
             IsExportMode="@_isExportMode" />
     </MudMainContent>
 </MudLayout>
+
+<MudOverlay Visible="@_isDecrypting" DarkBackground="true">
+    <div class="d-flex flex-column align-center" style="gap: 16px;">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+        <MudText Typo="Typo.body1" Style="color: #fff;">Decrypting clips…</MudText>
+    </div>
+</MudOverlay>
 
 @code {
     private bool _isBrowserCollapsed = true;

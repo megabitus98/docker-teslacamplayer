@@ -21,6 +21,12 @@ public class AppSettingItem
     public string EffectiveValue { get; set; }
     public string Source { get; set; } = "default";
     public bool IsRequired { get; set; }
+
+    /// <summary>
+    /// When true the value is a secret (e.g. a token): the server never sends the real value to
+    /// the client — a mask marker stands in — and the client renders a password field.
+    /// </summary>
+    public bool IsSecret { get; set; }
     public bool IsValid { get; set; } = true;
     public string ValidationMessage { get; set; }
 }

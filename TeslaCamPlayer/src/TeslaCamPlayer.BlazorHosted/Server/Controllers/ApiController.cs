@@ -5,6 +5,7 @@ using System.Web;
 using TeslaCamPlayer.BlazorHosted.Server.Providers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services;
+using TeslaCamPlayer.BlazorHosted.Server.Services.Decryption;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 
@@ -18,13 +19,23 @@ public class ApiController : ControllerBase
     private readonly IRefreshProgressService _refreshProgressService;
     private readonly IExportService _exportService;
     private readonly ISettingsProvider _settingsProvider;
+    private readonly ITeslaAuthService _teslaAuthService;
+    private readonly IClipDecryptionService _clipDecryptionService;
 
-    public ApiController(ISettingsProvider settingsProvider, IClipsService clipsService, IRefreshProgressService refreshProgressService, IExportService exportService)
+    public ApiController(
+        ISettingsProvider settingsProvider,
+        IClipsService clipsService,
+        IRefreshProgressService refreshProgressService,
+        IExportService exportService,
+        ITeslaAuthService teslaAuthService,
+        IClipDecryptionService clipDecryptionService)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
         _refreshProgressService = refreshProgressService;
         _exportService = exportService;
+        _teslaAuthService = teslaAuthService;
+        _clipDecryptionService = clipDecryptionService;
     }
 
     [HttpGet]
@@ -93,6 +104,53 @@ public class ApiController : ControllerBase
     }
 
     [HttpGet]
+    public async Task<TeslaConnectionStatus> TeslaStatus(CancellationToken cancellationToken)
+        => await _teslaAuthService.ProbeAsync(cancellationToken);
+
+    [HttpPost]
+    public async Task<IActionResult> PrepareEvent(string path, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return BadRequest("Missing path");
+
+        var fullPath = Path.GetFullPath(HttpUtility.UrlDecode(path));
+        if (!TryGetRootFullPath(out var rootFullPath))
+            return BadRequest("Clips root path is not configured.");
+
+        if (!IsUnderRootPath(fullPath, rootFullPath))
+            return BadRequest("Invalid path");
+
+        try
+        {
+            var clip = await _clipsService.PrepareEncryptedEventAsync(fullPath, cancellationToken);
+            if (clip == null)
+            {
+                return Ok(new PrepareEventResponse
+                {
+                    Success = false,
+                    ErrorCode = "DecryptFailed",
+                    ErrorMessage = "Could not decrypt this event's clips."
+                });
+            }
+
+            return Ok(new PrepareEventResponse { Success = true, Clip = clip });
+        }
+        catch (TeslaNotConnectedException ex)
+        {
+            return Ok(new PrepareEventResponse { Success = false, ErrorCode = "NotConnected", ErrorMessage = ex.Message });
+        }
+        catch (TeslaRefreshFailedException ex)
+        {
+            return Ok(new PrepareEventResponse { Success = false, ErrorCode = "RefreshFailed", ErrorMessage = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "PrepareEvent failed for {Path}", fullPath);
+            return Ok(new PrepareEventResponse { Success = false, ErrorCode = "DecryptFailed", ErrorMessage = "Decryption failed." });
+        }
+    }
+
+    [HttpGet]
     public AppSettingsResponse GetAppSettings()
         => _settingsProvider.GetAppSettings();
 
@@ -158,7 +216,8 @@ public class ApiController : ControllerBase
         if (!TryGetRootFullPath(out var rootFullPath))
             return BadRequest("Clips root path is not configured.");
 
-        if (!IsUnderRootPath(path, rootFullPath))
+        // Decrypted clips live in the cache directory, outside the clips root — allow those too.
+        if (!IsUnderRootPath(path, rootFullPath) && !_clipDecryptionService.IsCachePath(path))
             return BadRequest($"File must be in subdirectory under \"{rootFullPath}\", but was \"{path}\"");
 
         if (!System.IO.File.Exists(path))

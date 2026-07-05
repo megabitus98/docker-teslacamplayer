@@ -11,6 +11,8 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Providers;
 public class SettingsProvider : ISettingsProvider
 {
     private const string SettingsFileName = "teslacamplayer.settings.json";
+    // Stand-in for a secret's real value in API responses and the "unchanged" sentinel on save.
+    private const string SecretMask = "••••••••";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly AppSettingDefinition[] Definitions = CreateDefinitions();
 
@@ -73,6 +75,12 @@ public class SettingsProvider : ISettingsProvider
 
                 var definition = FindDefinition(key);
                 if (definition == null)
+                {
+                    continue;
+                }
+
+                // The client echoes the mask back for an untouched secret — leave the stored value alone.
+                if (definition.IsSecret && string.Equals(rawValue, SecretMask, StringComparison.Ordinal))
                 {
                     continue;
                 }
@@ -144,6 +152,27 @@ public class SettingsProvider : ISettingsProvider
         }
     }
 
+    public void SetPersistedValue(string key, string? value)
+    {
+        lock (_gate)
+        {
+            var next = Clone(_persistedSettings);
+            next.IsConfigured = true;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                next.Values.Remove(key);
+            }
+            else
+            {
+                next.Values[key] = value;
+            }
+
+            SavePersistedSettings(next);
+            _persistedSettings = next;
+            _settings = BuildSettings(true, next.Values);
+        }
+    }
+
     private AppSettingsResponse BuildResponse(
         Settings effectiveSettings,
         Settings baselineSettings,
@@ -184,6 +213,31 @@ public class SettingsProvider : ISettingsProvider
             ? saveError
             : ValidateSetting(definition.Key, effectiveSettings, createDirectories: false);
 
+        var effectiveValue = definition.GetValue(effectiveSettings);
+
+        if (definition.IsSecret)
+        {
+            // Never ship a secret's real value to the client. A mask stands in when a value is set.
+            return new AppSettingItem
+            {
+                Key = definition.Key,
+                Label = definition.Label,
+                Description = definition.Description,
+                InputType = definition.InputType,
+                Options = definition.Options,
+                EnvVarName = definition.EnvVarNames.FirstOrDefault(),
+                EnvValue = string.IsNullOrEmpty(envValue) ? null : SecretMask,
+                SavedValue = string.IsNullOrEmpty(savedValue) ? null : SecretMask,
+                BaselineValue = string.Empty,
+                EffectiveValue = string.IsNullOrEmpty(effectiveValue) ? string.Empty : SecretMask,
+                Source = savedValue != null ? "WebUI override" : GetBaselineSource(definition, configuredJsonKeys),
+                IsRequired = definition.IsRequired,
+                IsSecret = true,
+                IsValid = string.IsNullOrWhiteSpace(validationMessage),
+                ValidationMessage = validationMessage
+            };
+        }
+
         return new AppSettingItem
         {
             Key = definition.Key,
@@ -195,7 +249,7 @@ public class SettingsProvider : ISettingsProvider
             EnvValue = envValue,
             SavedValue = savedValue,
             BaselineValue = definition.GetValue(baselineSettings),
-            EffectiveValue = definition.GetValue(effectiveSettings),
+            EffectiveValue = effectiveValue,
             Source = savedValue != null ? "WebUI override" : GetBaselineSource(definition, configuredJsonKeys),
             IsRequired = definition.IsRequired,
             IsValid = string.IsNullOrWhiteSpace(validationMessage),
@@ -371,6 +425,19 @@ public class SettingsProvider : ISettingsProvider
             settings.ExportRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot", "exports");
         }
 
+        if (string.IsNullOrWhiteSpace(settings.DecryptedCachePath))
+        {
+            var cacheDir = Path.GetDirectoryName(settings.CacheDatabasePath);
+            settings.DecryptedCachePath = !string.IsNullOrWhiteSpace(cacheDir)
+                ? Path.Combine(cacheDir, "decrypted")
+                : Path.Combine(AppContext.BaseDirectory, "decrypted");
+        }
+
+        if (settings.DecryptedCacheMaxGb <= 0)
+        {
+            settings.DecryptedCacheMaxGb = 10;
+        }
+
         settings.ExportRetentionHours = Math.Max(0, settings.ExportRetentionHours);
 
         if (settings.IndexingBatchSize <= 0)
@@ -507,7 +574,10 @@ public class SettingsProvider : ISettingsProvider
             IndexingBatchSize = settings.IndexingBatchSize,
             IndexingMinBatchSize = settings.IndexingMinBatchSize,
             IndexingMaxMemoryUtilization = settings.IndexingMaxMemoryUtilization,
-            IndexingMemoryRecoveryDelaySeconds = settings.IndexingMemoryRecoveryDelaySeconds
+            IndexingMemoryRecoveryDelaySeconds = settings.IndexingMemoryRecoveryDelaySeconds,
+            TeslaRefreshToken = settings.TeslaRefreshToken,
+            DecryptedCachePath = settings.DecryptedCachePath,
+            DecryptedCacheMaxGb = settings.DecryptedCacheMaxGb
         };
 
     private static PersistedSettings Clone(PersistedSettings settings)
@@ -638,6 +708,34 @@ public class SettingsProvider : ISettingsProvider
                 new[] { "INDEXING_MEMORY_RECOVERY_DELAY_SECONDS", "IndexingMemoryRecoveryDelaySeconds" },
                 settings => settings.IndexingMemoryRecoveryDelaySeconds.ToString(CultureInfo.InvariantCulture),
                 (settings, value) => settings.IndexingMemoryRecoveryDelaySeconds = int.Parse(value, CultureInfo.InvariantCulture),
+                value => ParseInt(value, min: 1)),
+            new AppSettingDefinition(
+                nameof(Settings.TeslaRefreshToken),
+                "Tesla refresh token",
+                "OAuth refresh token used to decrypt encrypted TeslaCam clips. Obtain it once with the tesla-dashcam-decrypt tool; it is stored securely and refreshed automatically.",
+                "password",
+                new[] { "TESLA_REFRESH_TOKEN", "TeslaRefreshToken" },
+                settings => settings.TeslaRefreshToken,
+                (settings, value) => settings.TeslaRefreshToken = value,
+                ParseOptionalString,
+                isSecret: true),
+            new AppSettingDefinition(
+                nameof(Settings.DecryptedCachePath),
+                "Decrypted cache path",
+                "Folder where decrypted copies of encrypted clips are cached.",
+                "text",
+                new[] { "DECRYPTED_CACHE_PATH", "DecryptedCachePath" },
+                settings => settings.DecryptedCachePath,
+                (settings, value) => settings.DecryptedCachePath = value,
+                ParseOptionalString),
+            new AppSettingDefinition(
+                nameof(Settings.DecryptedCacheMaxGb),
+                "Decrypted cache max (GB)",
+                "Maximum size of the decrypted-clip cache in gigabytes before least-recently-used clips are evicted.",
+                "integer",
+                new[] { "DECRYPTED_CACHE_MAX_GB", "DecryptedCacheMaxGb" },
+                settings => settings.DecryptedCacheMaxGb.ToString(CultureInfo.InvariantCulture),
+                (settings, value) => settings.DecryptedCacheMaxGb = int.Parse(value, CultureInfo.InvariantCulture),
                 value => ParseInt(value, min: 1))
         };
 
@@ -648,6 +746,9 @@ public class SettingsProvider : ISettingsProvider
             ? ParseResult.Fail("Value is required.")
             : ParseResult.Ok(trimmed);
     }
+
+    private static ParseResult ParseOptionalString(string? value)
+        => ParseResult.Ok(value?.Trim() ?? string.Empty);
 
     private static ParseResult ParseBool(string? value)
     {
@@ -704,6 +805,7 @@ public class SettingsProvider : ISettingsProvider
             Func<string?, ParseResult> parse,
             bool isRequired = false,
             bool causesClipRefresh = false,
+            bool isSecret = false,
             string[]? options = null)
         {
             Key = key;
@@ -716,6 +818,7 @@ public class SettingsProvider : ISettingsProvider
             Parse = parse;
             IsRequired = isRequired;
             CausesClipRefresh = causesClipRefresh;
+            IsSecret = isSecret;
             Options = options ?? Array.Empty<string>();
         }
 
@@ -729,6 +832,7 @@ public class SettingsProvider : ISettingsProvider
         public Func<string?, ParseResult> Parse { get; }
         public bool IsRequired { get; }
         public bool CausesClipRefresh { get; }
+        public bool IsSecret { get; }
         public string[] Options { get; }
     }
 

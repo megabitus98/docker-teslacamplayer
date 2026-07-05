@@ -53,3 +53,6 @@ publish/
 dist/
 *.zip
 *.tar.gz
+
+# Local secrets (Tesla tokens for decryption)
+.env

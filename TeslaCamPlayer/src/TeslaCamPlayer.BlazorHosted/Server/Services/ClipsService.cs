@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using TeslaCamPlayer.BlazorHosted.Server.Models;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
+using TeslaCamPlayer.BlazorHosted.Server.Services.Decryption;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 
@@ -26,6 +27,7 @@ public partial class ClipsService : IClipsService
     private readonly SemaphoreSlim _ffprobeSemaphore;
     private readonly IRefreshProgressService _refreshProgressService;
     private readonly IClipIndexRepository _clipIndexRepository;
+    private readonly IClipDecryptionService _clipDecryptionService;
 
     // State for background progressive refresh
     private static readonly object _refreshGate = new();
@@ -38,12 +40,14 @@ public partial class ClipsService : IClipsService
         ISettingsProvider settingsProvider,
         IFfProbeService ffProbeService,
         IRefreshProgressService refreshProgressService,
-        IClipIndexRepository clipIndexRepository)
+        IClipIndexRepository clipIndexRepository,
+        IClipDecryptionService clipDecryptionService)
     {
         _settingsProvider = settingsProvider;
         _ffProbeService = ffProbeService;
         _refreshProgressService = refreshProgressService;
         _clipIndexRepository = clipIndexRepository;
+        _clipDecryptionService = clipDecryptionService;
         // Native MP4 mvhd parsing reads ~256 KiB from each file. On spinning-disk arrays, more
         // concurrent random reads cause head thrashing rather than parallelism — match
         // ProcessorCount, which empirically balances CPU-bound parse work and disk seek pressure.
@@ -217,7 +221,27 @@ public partial class ClipsService : IClipsService
             return null;
         }
 
-        var segments = eventVideoFiles
+        var segments = BuildSegmentsByStartDate(eventVideoFiles);
+
+        var eventFolderPath = Path.GetDirectoryName(eventVideoFiles.First().FilePath);
+        if (string.IsNullOrEmpty(eventFolderPath))
+        {
+            return null;
+        }
+
+        var isEncryptedClip = eventVideoFiles.Any(v => v.IsEncrypted);
+        var (eventInfo, thumbnailUrl) = ReadEventMeta(eventFolderPath, isEncryptedClip);
+
+        return new Clip(clipType, segments)
+        {
+            DirectoryPath = eventFolderPath,
+            Event = eventInfo,
+            ThumbnailUrl = thumbnailUrl
+        };
+    }
+
+    private static ClipVideoSegment[] BuildSegmentsByStartDate(IEnumerable<VideoFile> eventVideoFiles)
+        => eventVideoFiles
             .GroupBy(v => v.StartDate)
             .Select(g => new ClipVideoSegment
             {
@@ -232,26 +256,21 @@ public partial class ClipsService : IClipsService
             })
             .ToArray();
 
-        var eventFolderPath = Path.GetDirectoryName(eventVideoFiles.First().FilePath);
-        if (string.IsNullOrEmpty(eventFolderPath))
+    // Encrypted events keep a generic thumbnail and no metadata: event.json and thumb.png are
+    // wrapped for the in-car recipient only and can't be decrypted off-vehicle.
+    private static (Event EventInfo, string ThumbnailUrl) ReadEventMeta(string eventFolderPath, bool isEncryptedClip)
+    {
+        if (isEncryptedClip)
         {
-            return null;
+            return (null, NoThumbnailImageUrl);
         }
 
-        var expectedEventJsonPath = Path.Combine(eventFolderPath, "event.json");
-        var eventInfo = TryReadEvent(expectedEventJsonPath);
-
-        var expectedEventThumbnailPath = Path.Combine(eventFolderPath, "thumb.png");
-        var thumbnailUrl = File.Exists(expectedEventThumbnailPath)
-            ? $"/Api/Thumbnail/{Uri.EscapeDataString(expectedEventThumbnailPath)}"
+        var eventInfo = TryReadEvent(Path.Combine(eventFolderPath, "event.json"));
+        var thumbnailPath = Path.Combine(eventFolderPath, "thumb.png");
+        var thumbnailUrl = File.Exists(thumbnailPath)
+            ? $"/Api/Thumbnail/{Uri.EscapeDataString(thumbnailPath)}"
             : NoThumbnailImageUrl;
-
-        return new Clip(clipType, segments)
-        {
-            DirectoryPath = eventFolderPath,
-            Event = eventInfo,
-            ThumbnailUrl = thumbnailUrl
-        };
+        return (eventInfo, thumbnailUrl);
     }
 
     private void StartBackgroundRefreshIfNeeded(RefreshMode mode)
@@ -718,9 +737,13 @@ public partial class ClipsService : IClipsService
         var matched = new List<string>();
         var clipTypeDirs = new[] { "SavedClips", "SentryClips", "RecentClips" };
 
-        foreach (var clipTypeDir in clipTypeDirs)
+        // Scan both the normal clip folders and the parallel EncryptedClips/ subtree.
+        var scanRoots = clipTypeDirs
+            .SelectMany(d => new[] { (dir: d, path: Path.Combine(rootPath, d)), (dir: d, path: Path.Combine(rootPath, "EncryptedClips", d)) })
+            .ToList();
+
+        foreach (var (clipTypeDir, clipTypePath) in scanRoots)
         {
-            var clipTypePath = Path.Combine(rootPath, clipTypeDir);
             if (!Directory.Exists(clipTypePath))
                 continue;
 
@@ -1027,30 +1050,8 @@ public partial class ClipsService : IClipsService
         await _ffprobeSemaphore.WaitAsync();
         try
         {
-            var clipType = regexMatch.Groups["type"].Value switch
-            {
-                "RecentClips" => ClipType.Recent,
-                "SavedClips" => ClipType.Saved,
-                "SentryClips" => ClipType.Sentry,
-                _ => ClipType.Unknown
-            };
-
-            var cameraToken = regexMatch.Groups["camera"].Value;
-            var camera = cameraToken switch
-            {
-                "back" => Cameras.Back,
-                "front" => Cameras.Front,
-                "left_repeater" => Cameras.LeftRepeater,
-                "right_repeater" => Cameras.RightRepeater,
-                // Support pillar camera file names (various common namings)
-                "left_pillar" => Cameras.LeftBPillar,
-                "right_pillar" => Cameras.RightBPillar,
-                "left_bpillar" => Cameras.LeftBPillar,
-                "right_bpillar" => Cameras.RightBPillar,
-                "leftpillar" => Cameras.LeftBPillar,
-                "rightpillar" => Cameras.RightBPillar,
-                _ => Cameras.Unknown
-            };
+            var clipType = ParseClipType(regexMatch);
+            var camera = ParseCamera(regexMatch);
 
             var date = new DateTime(
                 int.Parse(regexMatch.Groups["vyear"].Value),
@@ -1060,11 +1061,24 @@ public partial class ClipsService : IClipsService
                 int.Parse(regexMatch.Groups["vminute"].Value),
                 int.Parse(regexMatch.Groups["vsecond"].Value));
 
-            var duration = await _ffProbeService.GetVideoFileDurationAsync(path);
-            if (!duration.HasValue)
+            // Encrypted clips can't be probed by ffprobe. Index them as "locked" (no duration) so
+            // they still appear in the timeline; they're decrypted on demand when the user opens them.
+            var isEncrypted = EcryptfsDecryptor.IsEncryptedFile(path);
+            TimeSpan duration;
+            if (isEncrypted)
             {
-                Log.Error("Failed to get duration for video file {Path}", path);
-                return null;
+                duration = TimeSpan.Zero;
+            }
+            else
+            {
+                var probed = await _ffProbeService.GetVideoFileDurationAsync(path);
+                if (!probed.HasValue)
+                {
+                    Log.Error("Failed to get duration for video file {Path}", path);
+                    return null;
+                }
+
+                duration = probed.Value;
             }
 
             var eventFolderName = clipType != ClipType.Recent
@@ -1079,13 +1093,113 @@ public partial class ClipsService : IClipsService
                 ClipType = clipType,
                 StartDate = date,
                 Camera = camera,
-                Duration = duration.Value
+                Duration = duration,
+                IsEncrypted = isEncrypted
             };
         }
         finally
         {
             _ffprobeSemaphore.Release();
         }
+    }
+
+    private static ClipType ParseClipType(Match regexMatch)
+        => regexMatch.Groups["type"].Value switch
+        {
+            "RecentClips" => ClipType.Recent,
+            "SavedClips" => ClipType.Saved,
+            "SentryClips" => ClipType.Sentry,
+            _ => ClipType.Unknown
+        };
+
+    private static Cameras ParseCamera(Match regexMatch)
+        => regexMatch.Groups["camera"].Value switch
+        {
+            "back" => Cameras.Back,
+            "front" => Cameras.Front,
+            "left_repeater" => Cameras.LeftRepeater,
+            "right_repeater" => Cameras.RightRepeater,
+            // Support pillar camera file names (various common namings)
+            "left_pillar" => Cameras.LeftBPillar,
+            "right_pillar" => Cameras.RightBPillar,
+            "left_bpillar" => Cameras.LeftBPillar,
+            "right_bpillar" => Cameras.RightBPillar,
+            "leftpillar" => Cameras.LeftBPillar,
+            "rightpillar" => Cameras.RightBPillar,
+            _ => Cameras.Unknown
+        };
+
+    /// <summary>
+    /// Decrypts an encrypted event's clips (if needed) and rebuilds the <see cref="Clip"/> with the
+    /// decrypted video URLs and real durations. Returns null when nothing playable came out (e.g. not
+    /// connected, or only console-only files). Auth failures propagate as exceptions to the caller.
+    /// </summary>
+    public async Task<Clip> PrepareEncryptedEventAsync(string eventDir, CancellationToken cancellationToken = default)
+    {
+        var result = await _clipDecryptionService.EnsureEventDecryptedAsync(eventDir, cancellationToken);
+
+        var videoFiles = new List<VideoFile>();
+        foreach (var file in Directory.EnumerateFiles(eventDir, "*.mp4"))
+        {
+            var match = FileNameRegex.Match(file);
+            if (!match.Success)
+                continue;
+
+            string playablePath;
+            if (result.DecryptedBySource.TryGetValue(file, out var decrypted))
+                playablePath = decrypted;
+            else if (!EcryptfsDecryptor.IsEncryptedFile(file))
+                playablePath = file; // already plaintext
+            else
+                continue; // encrypted but not decryptable (console-only / failed) — leave it out
+
+            var videoFile = await BuildDecryptedVideoFileAsync(file, playablePath, match);
+            if (videoFile != null)
+                videoFiles.Add(videoFile);
+        }
+
+        if (videoFiles.Count == 0)
+            return null;
+
+        var segments = BuildSegmentsByStartDate(videoFiles);
+        return new Clip(videoFiles[0].ClipType, segments)
+        {
+            DirectoryPath = eventDir,
+            Event = null,
+            ThumbnailUrl = NoThumbnailImageUrl
+        };
+    }
+
+    private async Task<VideoFile> BuildDecryptedVideoFileAsync(string sourcePath, string playablePath, Match match)
+    {
+        var duration = await _ffProbeService.GetVideoFileDurationAsync(playablePath);
+        if (!duration.HasValue)
+        {
+            Log.Error("Failed to get duration for decrypted video file {Path}", playablePath);
+            return null;
+        }
+
+        var clipType = ParseClipType(match);
+        var eventFolderName = clipType != ClipType.Recent ? match.Groups["event"].Value : null;
+        var date = new DateTime(
+            int.Parse(match.Groups["vyear"].Value),
+            int.Parse(match.Groups["vmonth"].Value),
+            int.Parse(match.Groups["vday"].Value),
+            int.Parse(match.Groups["vhour"].Value),
+            int.Parse(match.Groups["vminute"].Value),
+            int.Parse(match.Groups["vsecond"].Value));
+
+        return new VideoFile
+        {
+            FilePath = sourcePath,
+            Url = $"/Api/Video/{Uri.EscapeDataString(playablePath)}",
+            EventFolderName = eventFolderName,
+            ClipType = clipType,
+            StartDate = date,
+            Camera = ParseCamera(match),
+            Duration = duration.Value,
+            IsEncrypted = false
+        };
     }
 
     private static Clip ParseClip(string eventFolderName, IEnumerable<VideoFile> videoFiles)
@@ -1095,30 +1209,11 @@ public partial class ClipsService : IClipsService
             .Where(v => v.EventFolderName == eventFolderName)
             .ToList();
 
-        var segments = eventVideoFiles
-            .GroupBy(v => v.StartDate)
-            .AsParallel()
-            .Select(g => new ClipVideoSegment
-            {
-                StartDate = g.Key,
-                EndDate = g.Key.Add(g.First().Duration),
-                CameraFront = g.FirstOrDefault(v => v.Camera == Cameras.Front),
-                CameraLeftRepeater = g.FirstOrDefault(v => v.Camera == Cameras.LeftRepeater),
-                CameraRightRepeater = g.FirstOrDefault(v => v.Camera == Cameras.RightRepeater),
-                CameraLeftBPillar = g.FirstOrDefault(v => v.Camera == Cameras.LeftBPillar),
-                CameraRightBPillar = g.FirstOrDefault(v => v.Camera == Cameras.RightBPillar),
-                CameraBack = g.FirstOrDefault(v => v.Camera == Cameras.Back)
-            })
-            .ToArray();
+        var segments = BuildSegmentsByStartDate(eventVideoFiles);
 
         var eventFolderPath = Path.GetDirectoryName(eventVideoFiles.First().FilePath)!;
-        var expectedEventJsonPath = Path.Combine(eventFolderPath, "event.json");
-        var eventInfo = TryReadEvent(expectedEventJsonPath);
-
-        var expectedEventThumbnailPath = Path.Combine(eventFolderPath, "thumb.png");
-        var thumbnailUrl = File.Exists(expectedEventThumbnailPath)
-            ? $"/Api/Thumbnail/{Uri.EscapeDataString(expectedEventThumbnailPath)}"
-            : NoThumbnailImageUrl;
+        var isEncryptedClip = eventVideoFiles.Any(v => v.IsEncrypted);
+        var (eventInfo, thumbnailUrl) = ReadEventMeta(eventFolderPath, isEncryptedClip);
 
         return new Clip(eventVideoFiles.First().ClipType, segments)
         {

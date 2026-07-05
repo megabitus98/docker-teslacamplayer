@@ -61,6 +61,9 @@ exchange/refresh), `auth.py` (persistence), `AUTH.md` (auth research + confirmed
   password reset. **Every refresh must persist the new refresh token or access is lost.**
 - One-time login is done by the user with the external tool / a real browser (captcha +
   Akamai block automated browsers); the app only ever holds and refreshes the resulting token.
+- **Implemented addition:** the auth service also accepts a pre-obtained access token via the
+  `TESLA_ACCESS_TOKEN` env var (used until it expires, no refresh) — a simple bearer-paste path and
+  the local-test seed. See the DECISIONS doc.
 
 ## Architecture
 

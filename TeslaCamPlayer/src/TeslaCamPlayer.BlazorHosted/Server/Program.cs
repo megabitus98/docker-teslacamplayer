@@ -4,6 +4,7 @@ using TeslaCamPlayer.BlazorHosted.Server.Hubs;
 using TeslaCamPlayer.BlazorHosted.Server.Providers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services;
+using TeslaCamPlayer.BlazorHosted.Server.Services.Decryption;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 
 Log.Logger = new LoggerConfiguration()
@@ -23,6 +24,19 @@ builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ISeiParserService, SeiParserService>();
 builder.Services.AddTransient<IMp4TimingService, Mp4TimingService>();
 builder.Services.AddHostedService<ExportCleanupService>();
+
+// Encrypted TeslaCam clip decryption (Tesla dashcam account auth + on-demand decrypt).
+builder.Services.AddHttpClient("tesla", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36");
+});
+builder.Services.AddSingleton<ITeslaAuthService, TeslaAuthService>();
+builder.Services.AddSingleton<ITeslaKeyService, TeslaKeyService>();
+builder.Services.AddSingleton<IClipDecryptionService, ClipDecryptionService>();
+builder.Services.AddHostedService<DecryptedCacheCleanupService>();
+
 builder.Services.AddSignalR();
 #if WINDOWS
 builder.Services.AddSingleton<FfProbeServiceWindows>();

@@ -9,4 +9,11 @@ public class VideoFile
     public DateTime StartDate { get; init; }
     public Cameras Camera { get; init; }
     public TimeSpan Duration { get; init; }
+
+    /// <summary>
+    /// True when the file on disk is a Tesla-encrypted clip that has not yet been decrypted.
+    /// Encrypted files are indexed without a duration (ffprobe can't read them) and are decrypted
+    /// on demand when the event is opened.
+    /// </summary>
+    public bool IsEncrypted { get; init; }
 }

@@ -23,6 +23,31 @@
             {
                 <div>
                     <MudText Typo="Typo.overline" Class="mud-text-secondary">@title</MudText>
+                    @if (title == TeslaGroupTitle)
+                    {
+                        <div class="mb-1">
+                            @if (_teslaStatus == null)
+                            {
+                                <MudChip Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">Checking…</MudChip>
+                            }
+                            else if (_teslaStatus.Connected)
+                            {
+                                <MudChip Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">Connected</MudChip>
+                            }
+                            else if (_teslaStatus.HasToken)
+                            {
+                                <MudChip Size="Size.Small" Color="Color.Warning" Icon="@Icons.Material.Filled.Warning">Reconnect needed</MudChip>
+                            }
+                            else
+                            {
+                                <MudChip Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Lock">Not connected</MudChip>
+                            }
+                            @if (_teslaStatus is { Connected: false, LastError: { Length: > 0 } })
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Error" Class="d-block">@_teslaStatus.LastError</MudText>
+                            }
+                        </div>
+                    }
                     <div class="d-flex flex-column mt-1" style="gap: 12px;">
                         @foreach (var item in items)
                         {
@@ -65,7 +90,7 @@
                                                       ValueChanged="@((string value) => SetValue(item.Key, value))"
                                                       Error="@HasError(item)"
                                                       ErrorText="@GetValidationMessage(item)"
-                                                      InputType="@(IsNumeric(item) ? MudBlazor.InputType.Number : MudBlazor.InputType.Text)"
+                                                      InputType="@GetMudInputType(item)"
                                                       Immediate="true" />
                                     }
                                 </div>
@@ -113,8 +138,12 @@
     {
         ("Storage", new[] { "ClipsRootPath", "CacheDatabasePath", "ExportRootPath", "ExportRetentionHours" }),
         ("General", new[] { "SpeedUnit", "EnableDelete" }),
+        ("Tesla account (decrypt encrypted clips)", new[] { "TeslaRefreshToken" }),
+        ("Decryption cache", new[] { "DecryptedCachePath", "DecryptedCacheMaxGb" }),
         ("Indexing", new[] { "IndexingBatchSize", "IndexingMinBatchSize", "IndexingMaxMemoryUtilization", "IndexingMemoryRecoveryDelaySeconds" })
     };
+
+    private const string TeslaGroupTitle = "Tesla account (decrypt encrypted clips)";
 
     private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _fieldErrors = new(StringComparer.OrdinalIgnoreCase);
@@ -122,6 +151,7 @@
     private bool _initialized;
     private bool _saving;
     private string _errorMessage;
+    private TeslaConnectionStatus _teslaStatus;
 
     protected override void OnParametersSet()
     {
@@ -136,6 +166,27 @@
         }
 
         _initialized = true;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var body = await HttpClient.GetStringAsync("Api/TeslaStatus");
+            _teslaStatus = JsonConvert.DeserializeObject<TeslaConnectionStatus>(body);
+        }
+        catch
+        {
+            _teslaStatus = null;
+        }
+    }
+
+    private static MudBlazor.InputType GetMudInputType(AppSettingItem item)
+    {
+        if (item.IsSecret || item.InputType == "password")
+            return MudBlazor.InputType.Password;
+
+        return IsNumeric(item) ? MudBlazor.InputType.Number : MudBlazor.InputType.Text;
     }
 
     private IEnumerable<(string Title, AppSettingItem[] Items)> GroupedSettings()

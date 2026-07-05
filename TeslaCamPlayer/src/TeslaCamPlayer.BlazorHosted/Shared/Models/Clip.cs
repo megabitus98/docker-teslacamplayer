@@ -11,6 +11,9 @@ public class Clip
     public string ThumbnailUrl { get; init; }
     public string DirectoryPath { get; set; }
 
+    /// <summary>True when any camera in this clip is still an encrypted (not-yet-decrypted) file.</summary>
+    public bool IsEncrypted { get; }
+
     public Clip(ClipType type, ClipVideoSegment[] segments)
     {
         Type = type;
@@ -18,6 +21,7 @@ public class Clip
         StartDate = segments.Min(s => s.StartDate);
         EndDate = segments.Max(s => s.EndDate);
         TotalSeconds = EndDate.Subtract(StartDate).TotalSeconds;
+        IsEncrypted = Segments.Any(s => s.VideoFiles.Any(v => v is { IsEncrypted: true }));
     }
 
     public ClipVideoSegment SegmentAtDate(DateTime date)

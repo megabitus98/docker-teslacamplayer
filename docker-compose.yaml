@@ -12,6 +12,11 @@ services:
       - SPEED_UNIT=kmh # Speed unit for SEI HUD telemetry (kmh or mph)
       - EXPORT_ROOT_PATH=/export
       - EXPORT_RETENTION_HOURS=0
+      # Decrypt encrypted TeslaCam clips (firmware 2026.20+). Obtain a refresh token once with the
+      # tesla-dashcam-decrypt tool and put it in a local .env (see .env.example). Optional.
+      - TESLA_REFRESH_TOKEN=${TESLA_REFRESH_TOKEN:-}
+      - DECRYPTED_CACHE_PATH=/config/decrypted
+      - DECRYPTED_CACHE_MAX_GB=10
     volumes:
       - appdata:/config
       - /Users/megabitus/Movies/TeslaCam:/media
