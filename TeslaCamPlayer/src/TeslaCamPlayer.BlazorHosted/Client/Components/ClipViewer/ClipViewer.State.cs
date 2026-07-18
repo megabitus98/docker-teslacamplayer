@@ -102,7 +102,7 @@ public partial class ClipViewer
             .Select(tile => tile.Player?.Src)
             .Count(src => !string.IsNullOrWhiteSpace(src));
 
-        var completedTask = await Task.WhenAny(Task.Run(async () =>
+        await Task.WhenAny(Task.Run(async () =>
         {
             while (_videoLoadedEventCount < cameraCount && !_loadSegmentCts.IsCancellationRequested)
             {
