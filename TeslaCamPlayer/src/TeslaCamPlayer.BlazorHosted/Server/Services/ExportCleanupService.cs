@@ -1,19 +1,14 @@
-using Microsoft.Extensions.Hosting;
 using Serilog;
-using System;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 
 namespace TeslaCamPlayer.BlazorHosted.Server.Services;
 
-public class ExportCleanupService : BackgroundService
+public class ExportCleanupService : PeriodicFileCleanupService
 {
     private readonly ISettingsProvider _settingsProvider;
-    private readonly TimeSpan _interval = TimeSpan.FromHours(1);
 
     public ExportCleanupService(ISettingsProvider settingsProvider)
+        : base(TimeSpan.FromHours(1), "Export cleanup failed")
     {
         _settingsProvider = settingsProvider;
 
@@ -28,24 +23,7 @@ public class ExportCleanupService : BackgroundService
         }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                CleanupOnce();
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Export cleanup failed");
-            }
-
-            try { await Task.Delay(_interval, stoppingToken); } catch { }
-        }
-    }
-
-    private void CleanupOnce()
+    protected override void CleanupOnce()
     {
         var settings = _settingsProvider.Settings;
         var exportDir = settings.ExportRootPath;
