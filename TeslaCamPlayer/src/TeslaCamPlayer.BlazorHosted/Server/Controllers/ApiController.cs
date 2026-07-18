@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Serilog;
 using System.Diagnostics;
 using System.Web;
+using TeslaCamPlayer.BlazorHosted.Server.Helpers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services;
@@ -74,26 +75,13 @@ public class ApiController : ControllerBase
 
         try
         {
-            rootFullPath = EnsureTrailingSeparator(Path.GetFullPath(clipsRootPath));
+            rootFullPath = PathSafety.EnsureTrailingSeparator(Path.GetFullPath(clipsRootPath));
             return true;
         }
         catch
         {
             return false;
         }
-    }
-
-    private static string EnsureTrailingSeparator(string path)
-        => path.EndsWith(Path.DirectorySeparatorChar)
-            ? path
-            : path + Path.DirectorySeparatorChar;
-
-    private static bool IsUnderRootPath(string path, string rootFullPath)
-    {
-        var fullPath = Path.GetFullPath(path);
-        var rootWithoutSeparator = rootFullPath.TrimEnd(Path.DirectorySeparatorChar);
-        return fullPath.Equals(rootWithoutSeparator, StringComparison.OrdinalIgnoreCase)
-            || fullPath.StartsWith(rootFullPath, StringComparison.OrdinalIgnoreCase);
     }
 
     [HttpGet]
@@ -117,7 +105,7 @@ public class ApiController : ControllerBase
         if (!TryGetRootFullPath(out var rootFullPath))
             return BadRequest("Clips root path is not configured.");
 
-        if (!IsUnderRootPath(fullPath, rootFullPath))
+        if (!PathSafety.IsUnder(rootFullPath, fullPath))
             return BadRequest("Invalid path");
 
         try
@@ -180,7 +168,7 @@ public class ApiController : ControllerBase
             return BadRequest("Invalid path");
 
         var fullPath = Path.GetFullPath(path);
-        if (!IsUnderRootPath(fullPath, rootFullPath))
+        if (!PathSafety.IsUnder(rootFullPath, fullPath))
             return BadRequest("Invalid path");
 
         try
@@ -217,7 +205,7 @@ public class ApiController : ControllerBase
             return BadRequest("Clips root path is not configured.");
 
         // Decrypted clips live in the cache directory, outside the clips root — allow those too.
-        if (!IsUnderRootPath(path, rootFullPath) && !_clipDecryptionService.IsCachePath(path))
+        if (!PathSafety.IsUnder(rootFullPath, path) && !_clipDecryptionService.IsCachePath(path))
             return BadRequest($"File must be in subdirectory under \"{rootFullPath}\", but was \"{path}\"");
 
         if (!System.IO.File.Exists(path))
@@ -296,7 +284,7 @@ public class ApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(path)) return BadRequest();
         path = Path.GetFullPath(path);
         var exportsRoot = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
-        if (!path.StartsWith(exportsRoot)) return BadRequest("Invalid path");
+        if (!PathSafety.IsUnder(exportsRoot, path)) return BadRequest("Invalid path");
         if (!System.IO.File.Exists(path)) return NotFound();
         var contentType = "application/octet-stream";
         var fileName = Path.GetFileName(path);
@@ -343,7 +331,7 @@ public class ApiController : ControllerBase
 
                 string url;
                 var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot", "exports");
-                if (Path.GetFullPath(path).StartsWith(Path.GetFullPath(wwwroot)))
+                if (PathSafety.IsUnder(Path.GetFullPath(wwwroot), path))
                 {
                     url = "/exports/" + fi.Name;
                 }
@@ -390,7 +378,7 @@ public class ApiController : ControllerBase
         if (!TryGetRootFullPath(out var rootFullPath))
             return BadRequest("Clips root path is not configured.");
 
-        if (!IsUnderRootPath(fullPath, rootFullPath))
+        if (!PathSafety.IsUnder(rootFullPath, fullPath))
             return BadRequest("Clip path is invalid");
 
         request.ClipDirectoryPath = fullPath;

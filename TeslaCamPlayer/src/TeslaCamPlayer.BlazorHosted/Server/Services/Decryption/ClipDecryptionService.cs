@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Serilog;
+using TeslaCamPlayer.BlazorHosted.Server.Helpers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 
 namespace TeslaCamPlayer.BlazorHosted.Server.Services.Decryption;
@@ -25,11 +26,7 @@ public sealed class ClipDecryptionService : IClipDecryptionService
     private string ClipsRoot => Path.GetFullPath(_settingsProvider.Settings.ClipsRootPath);
 
     public bool IsCachePath(string fullPath)
-    {
-        var cacheRoot = CacheRoot;
-        var normalized = Path.GetFullPath(fullPath);
-        return normalized.StartsWith(EnsureTrailingSeparator(cacheRoot), StringComparison.OrdinalIgnoreCase);
-    }
+        => PathSafety.IsUnder(CacheRoot, fullPath);
 
     public string GetCachePathFor(string sourcePath)
     {
@@ -192,7 +189,4 @@ public sealed class ClipDecryptionService : IClipDecryptionService
             // ignore
         }
     }
-
-    private static string EnsureTrailingSeparator(string path)
-        => path.EndsWith(Path.DirectorySeparatorChar) ? path : path + Path.DirectorySeparatorChar;
 }
