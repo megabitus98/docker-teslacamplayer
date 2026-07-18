@@ -32,4 +32,10 @@ public class Settings
 
     /// <summary>Maximum size of the decrypted-clip cache in gigabytes before LRU eviction kicks in.</summary>
     public int DecryptedCacheMaxGb { get; set; } = 10;
+
+    /// <summary>
+    /// Shallow copy. Exact because every property is a value type or string — if you add a
+    /// mutable reference-type property (array/list/object), this must deep-copy it.
+    /// </summary>
+    public Settings Clone() => (Settings)MemberwiseClone();
 }
