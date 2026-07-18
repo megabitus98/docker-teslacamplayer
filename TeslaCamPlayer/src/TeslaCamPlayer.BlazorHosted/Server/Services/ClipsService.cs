@@ -214,7 +214,7 @@ public partial class ClipsService : IClipsService
         return clips.ToArray();
     }
 
-    private Clip BuildClipFromEventVideos(List<VideoFile> eventVideoFiles, ClipType clipType)
+    private static Clip BuildClipFromEventVideos(List<VideoFile> eventVideoFiles, ClipType clipType)
     {
         if (eventVideoFiles == null || eventVideoFiles.Count == 0)
         {
@@ -243,18 +243,23 @@ public partial class ClipsService : IClipsService
     private static ClipVideoSegment[] BuildSegmentsByStartDate(IEnumerable<VideoFile> eventVideoFiles)
         => eventVideoFiles
             .GroupBy(v => v.StartDate)
-            .Select(g => new ClipVideoSegment
-            {
-                StartDate = g.Key,
-                EndDate = g.Key.Add(g.First().Duration),
-                CameraFront = g.FirstOrDefault(v => v.Camera == Cameras.Front),
-                CameraLeftRepeater = g.FirstOrDefault(v => v.Camera == Cameras.LeftRepeater),
-                CameraRightRepeater = g.FirstOrDefault(v => v.Camera == Cameras.RightRepeater),
-                CameraLeftBPillar = g.FirstOrDefault(v => v.Camera == Cameras.LeftBPillar),
-                CameraRightBPillar = g.FirstOrDefault(v => v.Camera == Cameras.RightBPillar),
-                CameraBack = g.FirstOrDefault(v => v.Camera == Cameras.Back)
-            })
+            .Select(g => BuildSegment(g.First(), g))
             .ToArray();
+
+    // The anchor supplies StartDate and the Duration used for EndDate — callers differ in which
+    // video of the group they anchor on (group-first here vs. iteration cursor in GetRecentClips).
+    private static ClipVideoSegment BuildSegment(VideoFile anchor, IEnumerable<VideoFile> segmentVideos)
+        => new()
+        {
+            StartDate = anchor.StartDate,
+            EndDate = anchor.StartDate.Add(anchor.Duration),
+            CameraFront = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.Front),
+            CameraLeftRepeater = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.LeftRepeater),
+            CameraRightRepeater = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.RightRepeater),
+            CameraLeftBPillar = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.LeftBPillar),
+            CameraRightBPillar = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.RightBPillar),
+            CameraBack = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.Back)
+        };
 
     // Encrypted events keep a generic thumbnail and no metadata: event.json and thumb.png are
     // wrapped for the in-car recipient only and can't be decrypted off-vehicle.
@@ -350,14 +355,7 @@ public partial class ClipsService : IClipsService
         var cutoff = new DateTime(maxTicks.Value).AddHours(-1);
         Log.Information("Incremental refresh: scanning for events since {Cutoff}.", cutoff);
 
-        var existing = _cache ?? Array.Empty<Clip>();
-        var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
-        foreach (var video in existing
-                     .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
-                     .Where(v => v != null))
-        {
-            knownVideoFiles[video.FilePath] = video;
-        }
+        var knownVideoFiles = SeedKnownFiles();
 
         var candidatePaths = EnumerateCandidatePathsSince(settings, cutoff);
         var totalCandidates = candidatePaths.Count;
@@ -412,14 +410,7 @@ public partial class ClipsService : IClipsService
         var initialBatchSize = Math.Max(settings.IndexingBatchSize, settings.IndexingMinBatchSize);
         var minBatchSize = Math.Max(1, settings.IndexingMinBatchSize);
 
-        var existing = _cache ?? Array.Empty<Clip>();
-        var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
-        foreach (var video in existing
-                     .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
-                     .Where(v => v != null))
-        {
-            knownVideoFiles[video.FilePath] = video;
-        }
+        var knownVideoFiles = SeedKnownFiles();
 
         var candidatePaths = EnumerateCandidatePaths(settings);
         var totalCandidates = candidatePaths.Count;
@@ -793,6 +784,32 @@ public partial class ClipsService : IClipsService
         return matched;
     }
 
+    // Seeds the already-parsed files map from the in-memory clip cache so a refresh skips re-probing.
+    private static ConcurrentDictionary<string, VideoFile> SeedKnownFiles()
+    {
+        var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var video in (_cache ?? Array.Empty<Clip>())
+                     .SelectMany(c => c.Segments.SelectMany(s => s.VideoFiles))
+                     .Where(v => v != null))
+        {
+            knownVideoFiles[video.FilePath] = video;
+        }
+
+        return knownVideoFiles;
+    }
+
+    // Builds the clip timestamp from the master FileNameRegex's v*-prefixed groups.
+    // Not mergeable with ParseTimestampFromMatch below: that one reads unprefixed group names
+    // from the folder/file timestamp regexes.
+    private static DateTime BuildStartDate(Match match)
+        => new(
+            int.Parse(match.Groups["vyear"].Value),
+            int.Parse(match.Groups["vmonth"].Value),
+            int.Parse(match.Groups["vday"].Value),
+            int.Parse(match.Groups["vhour"].Value),
+            int.Parse(match.Groups["vminute"].Value),
+            int.Parse(match.Groups["vsecond"].Value));
+
     private static DateTime ParseTimestampFromMatch(Match match)
     {
         return new DateTime(
@@ -978,17 +995,7 @@ public partial class ClipsService : IClipsService
         {
             var currentVideoFile = recentVideoFiles[i];
             var segmentVideos = recentVideoFiles.Where(f => f.StartDate == currentVideoFile.StartDate).ToList();
-            var segment = new ClipVideoSegment
-            {
-                StartDate = currentVideoFile.StartDate,
-                EndDate = currentVideoFile.StartDate.Add(currentVideoFile.Duration),
-                CameraFront = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.Front),
-                CameraLeftRepeater = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.LeftRepeater),
-                CameraRightRepeater = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.RightRepeater),
-                CameraLeftBPillar = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.LeftBPillar),
-                CameraRightBPillar = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.RightBPillar),
-                CameraBack = segmentVideos.FirstOrDefault(v => v.Camera == Cameras.Back)
-            };
+            var segment = BuildSegment(currentVideoFile, segmentVideos);
 
             currentClipSegments.Add(segment);
 
@@ -1042,13 +1049,7 @@ public partial class ClipsService : IClipsService
             var clipType = ParseClipType(regexMatch);
             var camera = ParseCamera(regexMatch);
 
-            var date = new DateTime(
-                int.Parse(regexMatch.Groups["vyear"].Value),
-                int.Parse(regexMatch.Groups["vmonth"].Value),
-                int.Parse(regexMatch.Groups["vday"].Value),
-                int.Parse(regexMatch.Groups["vhour"].Value),
-                int.Parse(regexMatch.Groups["vminute"].Value),
-                int.Parse(regexMatch.Groups["vsecond"].Value));
+            var date = BuildStartDate(regexMatch);
 
             // Encrypted clips can't be probed by ffprobe. Index them as "locked" (no duration) so
             // they still appear in the timeline; they're decrypted on demand when the user opens them.
@@ -1170,13 +1171,7 @@ public partial class ClipsService : IClipsService
 
         var clipType = ParseClipType(match);
         var eventFolderName = clipType != ClipType.Recent ? match.Groups["event"].Value : null;
-        var date = new DateTime(
-            int.Parse(match.Groups["vyear"].Value),
-            int.Parse(match.Groups["vmonth"].Value),
-            int.Parse(match.Groups["vday"].Value),
-            int.Parse(match.Groups["vhour"].Value),
-            int.Parse(match.Groups["vminute"].Value),
-            int.Parse(match.Groups["vsecond"].Value));
+        var date = BuildStartDate(match);
 
         return new VideoFile
         {
@@ -1201,18 +1196,7 @@ public partial class ClipsService : IClipsService
             .Where(v => v.EventFolderName == eventFolderName)
             .ToList();
 
-        var segments = BuildSegmentsByStartDate(eventVideoFiles);
-
-        var eventFolderPath = Path.GetDirectoryName(eventVideoFiles.First().FilePath)!;
-        var isEncryptedClip = eventVideoFiles.Any(v => v.IsEncrypted);
-        var (eventInfo, thumbnailUrl) = ReadEventMeta(eventFolderPath, isEncryptedClip);
-
-        return new Clip(eventVideoFiles.First().ClipType, segments)
-        {
-            DirectoryPath = eventFolderPath,
-            Event = eventInfo,
-            ThumbnailUrl = thumbnailUrl
-        };
+        return BuildClipFromEventVideos(eventVideoFiles, eventVideoFiles.First().ClipType);
     }
 
     private static Event TryReadEvent(string path)
