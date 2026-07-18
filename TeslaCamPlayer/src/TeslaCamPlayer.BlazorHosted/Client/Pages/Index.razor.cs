@@ -11,7 +11,6 @@ using TeslaCamPlayer.BlazorHosted.Client.Models;
 using TeslaCamPlayer.BlazorHosted.Client.Services;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
 using System.Reflection;
-using System.Net.Http.Json;
 using System.Collections.Generic;
 using System.Threading;
 
@@ -547,9 +546,9 @@ public partial class Index : ComponentBase, IAsyncDisposable
             IncludeSeiHud = _exportIncludeSeiHud
         };
 
-        var resp = await HttpClient.PostAsJsonAsync("Api/StartExport", request);
+        var resp = await HttpClient.PostAsNewtonsoftJsonAsync("Api/StartExport", request);
         resp.EnsureSuccessStatusCode();
-        var body = await resp.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        var body = await resp.ReadFromNewtonsoftJsonAsync<Dictionary<string, string>>();
         var jobId = body != null && body.TryGetValue("jobId", out var value) ? value : null;
         if (string.IsNullOrWhiteSpace(jobId))
             return;
@@ -868,8 +867,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
         {
             var response = await HttpClient.PostAsync(
                 $"Api/PrepareEvent?path={Uri.EscapeDataString(clip.DirectoryPath)}", null);
-            var body = await response.Content.ReadAsStringAsync();
-            var result = Newtonsoft.Json.JsonConvert.DeserializeObject<PrepareEventResponse>(body);
+            var result = await response.ReadFromNewtonsoftJsonAsync<PrepareEventResponse>();
 
             if (result is { Success: true, Clip: not null })
             {

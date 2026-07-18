@@ -144,7 +144,7 @@
 
         try
         {
-            var data = await Http.GetFromJsonAsync<List<ExportItemVm>>("Api/ListExports");
+            var data = await Http.GetFromNewtonsoftJsonAsync<List<ExportItemVm>>("Api/ListExports");
             await InvokeAsync(() =>
             {
                 _items.Clear();

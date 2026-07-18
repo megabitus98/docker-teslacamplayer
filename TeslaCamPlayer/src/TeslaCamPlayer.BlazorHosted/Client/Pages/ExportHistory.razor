@@ -89,7 +89,7 @@
     {
         try
         {
-            var data = await Http.GetFromJsonAsync<List<ExportItemVm>>("Api/ListExports");
+            var data = await Http.GetFromNewtonsoftJsonAsync<List<ExportItemVm>>("Api/ListExports");
             _items = data ?? new List<ExportItemVm>();
 
             // Clean up tracking sets
