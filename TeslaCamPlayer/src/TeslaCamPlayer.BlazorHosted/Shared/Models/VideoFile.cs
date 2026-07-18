@@ -16,4 +16,6 @@ public class VideoFile
     /// on demand when the event is opened.
     /// </summary>
     public bool IsEncrypted { get; init; }
+
+    public static string BuildApiUrl(string filePath) => $"/Api/Video/{Uri.EscapeDataString(filePath)}";
 }

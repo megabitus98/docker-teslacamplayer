@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Hosting;
 using Serilog;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 
@@ -8,34 +7,17 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Services.Decryption;
 /// Keeps the decrypted-clip cache under the configured size cap by evicting the least-recently-used
 /// files (by last access time). Decrypted clips are re-derivable, so eviction is safe.
 /// </summary>
-public sealed class DecryptedCacheCleanupService : BackgroundService
+public sealed class DecryptedCacheCleanupService : PeriodicFileCleanupService
 {
     private readonly ISettingsProvider _settingsProvider;
-    private readonly TimeSpan _interval = TimeSpan.FromMinutes(30);
 
     public DecryptedCacheCleanupService(ISettingsProvider settingsProvider)
+        : base(TimeSpan.FromMinutes(30), "Decrypted cache cleanup failed")
     {
         _settingsProvider = settingsProvider;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                CleanupOnce();
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Decrypted cache cleanup failed");
-            }
-
-            try { await Task.Delay(_interval, stoppingToken); } catch { }
-        }
-    }
-
-    private void CleanupOnce()
+    protected override void CleanupOnce()
     {
         var settings = _settingsProvider.Settings;
         var cacheDir = settings.DecryptedCachePath;

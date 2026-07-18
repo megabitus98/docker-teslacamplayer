@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using TeslaCamPlayer.BlazorHosted.Server.Helpers;
 using TeslaCamPlayer.BlazorHosted.Server.Hubs;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
@@ -87,6 +88,17 @@ public class ExportService : IExportService
             TaskContinuationOptions.OnlyOnFaulted);
     }
 
+    private void SetState(string jobId, ExportState state, double percent = 0, string outputUrl = null, string errorMessage = null, TimeSpan? eta = null, string reason = null)
+        => BroadcastStatus(jobId, new ExportStatus
+        {
+            JobId = jobId,
+            State = state,
+            Percent = percent,
+            Eta = eta,
+            OutputUrl = outputUrl,
+            ErrorMessage = errorMessage
+        }, reason ?? state.ToString().ToLowerInvariant());
+
     public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext, ISeiParserService seiParser, IHudRendererService hudRenderer, IMp4TimingService mp4Timing)
     {
         _settingsProvider = settingsProvider;
@@ -100,12 +112,7 @@ public class ExportService : IExportService
     public Task<string> StartExportAsync(ExportRequest request)
     {
         var jobId = Guid.NewGuid().ToString("N");
-        BroadcastStatus(jobId, new ExportStatus
-        {
-            JobId = jobId,
-            State = ExportState.Pending,
-            Percent = 0
-        }, "pending");
+        SetState(jobId, ExportState.Pending);
 
         var cts = new CancellationTokenSource();
         _cancellations[jobId] = cts;
@@ -134,26 +141,87 @@ public class ExportService : IExportService
         return false;
     }
 
+    // ponytail: metadata read stays sync (raw ffprobe, see TryReadExportMetadata) — Task shape kept for the interface.
+    public Task<List<ExportItem>> ListExportsAsync()
+    {
+        var items = new List<ExportItem>();
+        var root = _settingsProvider.Settings.ExportRootPath;
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            return Task.FromResult(items);
+
+        foreach (var path in Directory.EnumerateFiles(root))
+        {
+            try
+            {
+                var fi = new FileInfo(path);
+                var jobId = Path.GetFileNameWithoutExtension(fi.Name);
+                var st = GetStatus(jobId) ?? new ExportStatus
+                {
+                    JobId = jobId,
+                    State = ExportState.Completed,
+                    Percent = 100
+                };
+
+                var (location, eventPath) = TryReadExportMetadata(fi.FullName);
+                items.Add(new ExportItem
+                {
+                    FileName = fi.Name,
+                    Url = BuildDownloadUrl(path),
+                    SizeBytes = fi.Length,
+                    CreatedUtc = fi.CreationTimeUtc,
+                    JobId = jobId,
+                    Status = st,
+                    Location = location,
+                    EventPath = eventPath
+                });
+            }
+            catch { }
+        }
+
+        // Sort newest first
+        items.Sort((a, b) => b.CreatedUtc.CompareTo(a.CreatedUtc));
+        return Task.FromResult(items);
+    }
+
+    public bool DeleteExport(string jobId, out string error)
+    {
+        var exportRoot = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
+        if (string.IsNullOrWhiteSpace(exportRoot) || !Directory.Exists(exportRoot))
+        {
+            error = "Export directory not found";
+            return false;
+        }
+
+        // Find the export file by jobId
+        var files = Directory.EnumerateFiles(exportRoot)
+            .Where(f => Path.GetFileNameWithoutExtension(f).Equals(jobId, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (!files.Any())
+        {
+            error = "Export file not found";
+            return false;
+        }
+
+        // Delete all matching files (should typically be just one)
+        foreach (var file in files)
+        {
+            File.Delete(file);
+            Log.Information("Deleted export file: {File}", file);
+        }
+
+        error = null;
+        return true;
+    }
+
     private async Task RunExportAsync(string jobId, ExportRequest request, CancellationToken cancel)
     {
-        string srtPath = null;
         string hudFramesDir = null;
         try
         {
-            if (_status.TryGetValue(jobId, out var current))
-            {
-                current.State = ExportState.Running;
-                BroadcastStatus(jobId, current, "running");
-            }
-            else
-            {
-                BroadcastStatus(jobId, new ExportStatus
-                {
-                    JobId = jobId,
-                    State = ExportState.Running,
-                    Percent = 0
-                }, "running");
-            }
+            // At this point the stored status is always the Pending one (Percent=0, no Eta/Url/Error),
+            // so a fresh Running status broadcasts an identical payload to the old mutate-and-rebroadcast.
+            SetState(jobId, ExportState.Running);
 
             // Validate request
             if (request.EndTimeUtc <= request.StartTimeUtc)
@@ -236,8 +304,7 @@ public class ExportService : IExportService
             argv.Add("-y");
             argv.Add("-hide_banner");
             argv.Add("-nostdin");
-            argv.Add("-progress");
-            argv.Add("pipe:1");
+            AddArg(argv, "-progress", "pipe:1");
 
             // Inputs: for each camera part, add -ss -t -i file
             var inputIndexMap = new Dictionary<(Cameras cam, int partIndex), int>();
@@ -249,12 +316,9 @@ public class ExportService : IExportService
                 {
                     var p = parts[i];
                     argv.Add("-accurate_seek");
-                    argv.Add("-ss");
-                    argv.Add(FormatTimeArg(p.start));
-                    argv.Add("-t");
-                    argv.Add(FormatTimeArg(p.duration));
-                    argv.Add("-i");
-                    argv.Add(p.path);
+                    AddArg(argv, "-ss", FormatTimeArg(p.start));
+                    AddArg(argv, "-t", FormatTimeArg(p.duration));
+                    AddArg(argv, "-i", p.path);
                     inputIndexMap[(cam, i)] = globalInputIndex++;
                 }
             }
@@ -684,10 +748,8 @@ public class ExportService : IExportService
 
                     // Add HUD frames as FFmpeg input
                     var hudInputIndex = globalInputIndex;
-                    argv.Add("-framerate");
-                    argv.Add(seiFrameRate.ToString("0.##", CultureInfo.InvariantCulture));
-                    argv.Add("-i");
-                    argv.Add(Path.Combine(hudFramesDir, "frame_%06d.png"));
+                    AddArg(argv, "-framerate", seiFrameRate.ToString("0.##", CultureInfo.InvariantCulture));
+                    AddArg(argv, "-i", Path.Combine(hudFramesDir, "frame_%06d.png"));
                     globalInputIndex++;
 
                     // Prepare HUD stream with precise timing
@@ -710,11 +772,10 @@ public class ExportService : IExportService
                 }
             }
 
-            argv.Add("-filter_complex");
-            argv.Add(filter.ToString());
+            AddArg(argv, "-filter_complex", filter.ToString());
 
             // map final
-            argv.Add("-map"); argv.Add($"[{finalLabel}]");
+            AddArg(argv, "-map", $"[{finalLabel}]");
 
             // No audio
             argv.Add("-an");
@@ -727,7 +788,7 @@ public class ExportService : IExportService
             {
                 var eventTime = clip.Event?.Timestamp ?? request.StartTimeUtc;
                 var utc = eventTime.ToUniversalTime().ToString("o");
-                argv.Add("-metadata"); argv.Add($"title=TeslaCamPlayer Export");
+                AddArg(argv, "-metadata", "title=TeslaCamPlayer Export");
 
                 // Build comment with EventTimeUTC, Location, and EventPath
                 var commentParts = new List<string> { $"EventTimeUTC={utc}" };
@@ -739,9 +800,9 @@ public class ExportService : IExportService
                 {
                     commentParts.Add($"EventPath={request.ClipDirectoryPath}");
                 }
-                argv.Add("-metadata"); argv.Add($"comment={string.Join("; ", commentParts)}");
+                AddArg(argv, "-metadata", $"comment={string.Join("; ", commentParts)}");
 
-                argv.Add("-metadata"); argv.Add($"creation_time={utc}");
+                AddArg(argv, "-metadata", $"creation_time={utc}");
             }
             catch { }
 
@@ -784,13 +845,7 @@ public class ExportService : IExportService
                             var sec = outMs / 1000000.0;
                             var pct = Math.Clamp(totalSeconds > 0 ? (sec / totalSeconds) * 100.0 : 0, 0, 100);
                             var eta = totalSeconds > 0 ? TimeSpan.FromSeconds(Math.Max(0, totalSeconds - sec)) : (TimeSpan?)null;
-                            BroadcastStatus(jobId, new ExportStatus
-                            {
-                                JobId = jobId,
-                                State = ExportState.Running,
-                                Percent = pct,
-                                Eta = eta
-                            }, "progress");
+                            SetState(jobId, ExportState.Running, pct, eta: eta, reason: "progress");
                         }
                     }
                 }
@@ -818,7 +873,7 @@ public class ExportService : IExportService
 
             if (cancel.IsCancellationRequested)
             {
-                BroadcastStatus(jobId, new ExportStatus { JobId = jobId, State = ExportState.Canceled, Percent = 0 }, "canceled");
+                SetState(jobId, ExportState.Canceled);
                 SafeDelete(outputFile);
                 return;
             }
@@ -828,33 +883,16 @@ public class ExportService : IExportService
 
             var url = BuildDownloadUrl(outputFile);
             _outputs[jobId] = outputFile;
-            BroadcastStatus(jobId, new ExportStatus
-            {
-                JobId = jobId,
-                State = ExportState.Completed,
-                Percent = 100,
-                OutputUrl = url
-            }, "completed");
+            SetState(jobId, ExportState.Completed, 100, url);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Export {JobId} failed", jobId);
-            BroadcastStatus(jobId, new ExportStatus
-            {
-                JobId = jobId,
-                State = ExportState.Failed,
-                ErrorMessage = ex.Message
-            }, "failed");
+            SetState(jobId, ExportState.Failed, errorMessage: ex.Message);
         }
         finally
         {
             if (_cancellations.TryRemove(jobId, out var c)) c.Dispose();
-
-            // Cleanup temporary SRT file
-            if (!string.IsNullOrEmpty(srtPath) && File.Exists(srtPath))
-            {
-                SafeDelete(srtPath);
-            }
 
             // Cleanup HUD frames directory
             if (!string.IsNullOrEmpty(hudFramesDir) && Directory.Exists(hudFramesDir))
@@ -883,13 +921,6 @@ public class ExportService : IExportService
             Cameras.RightBPillar => "Right Pillar",
             _ => cam.ToString()
         };
-
-    private static string EscapePath(string p)
-    {
-        if (string.IsNullOrEmpty(p)) return p;
-        if (p.Contains(' ')) return $"\"{p}\"";
-        return p;
-    }
 
     private static string EscapeDrawText(string text)
         => text.Replace("\\", "\\\\").Replace(":", "\\:").Replace("'", "\\'");
@@ -956,6 +987,12 @@ public class ExportService : IExportService
         return result;
     }
 
+    private static void AddArg(List<string> argv, string name, string value)
+    {
+        argv.Add(name);
+        argv.Add(value);
+    }
+
     private static void AddCodecArgs(List<string> args, ExportRequest request)
     {
         var fmt = SanitizeFormat(request.Format);
@@ -963,14 +1000,14 @@ public class ExportService : IExportService
         {
             case "mp4":
             case "mov":
-                args.Add("-c:v"); args.Add("libx264");
-                args.Add("-pix_fmt"); args.Add("yuv420p");
+                AddArg(args, "-c:v", "libx264");
+                AddArg(args, "-pix_fmt", "yuv420p");
                 var (preset, crf) = QualityToPresetCrf(request.Quality);
-                args.Add("-preset"); args.Add(preset);
-                args.Add("-crf"); args.Add(crf);
+                AddArg(args, "-preset", preset);
+                AddArg(args, "-crf", crf);
                 if (fmt == "mp4")
                 {
-                    args.Add("-movflags"); args.Add("+faststart");
+                    AddArg(args, "-movflags", "+faststart");
                 }
                 break;
         }
@@ -986,22 +1023,13 @@ public class ExportService : IExportService
         }
     }
 
-    private static string QualityToQscale(string q)
-        => (q ?? "").ToLowerInvariant() switch
-        {
-            "high" => "3",
-            "low" => "7",
-            _ => "5"
-        };
-
     private string BuildDownloadUrl(string outputFile)
     {
         try
         {
             var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
             var full = Path.GetFullPath(outputFile);
-            var root = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
-            if (full.StartsWith(Path.GetFullPath(Path.Combine(wwwroot, "exports"))))
+            if (PathSafety.IsUnder(Path.GetFullPath(Path.Combine(wwwroot, "exports")), full))
             {
                 return "/exports/" + Path.GetFileName(outputFile);
             }
@@ -1012,6 +1040,71 @@ public class ExportService : IExportService
         catch
         {
             return "/" + Path.GetFileName(outputFile);
+        }
+    }
+
+    private static (string location, string eventPath) TryReadExportMetadata(string path)
+    {
+        try
+        {
+            // ponytail: raw ffprobe spawn kept — IFfProbeService only exposes duration and its
+            // ExePath is protected; same bare-binary convention as the ffmpeg spawn above.
+            var psi = new ProcessStartInfo("ffprobe")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            psi.ArgumentList.Add("-v");
+            psi.ArgumentList.Add("error");
+            psi.ArgumentList.Add("-hide_banner");
+            psi.ArgumentList.Add("-show_entries");
+            psi.ArgumentList.Add("format_tags=comment");
+            psi.ArgumentList.Add("-of");
+            psi.ArgumentList.Add("default=noprint_wrappers=1:nokey=1");
+            psi.ArgumentList.Add(path);
+
+            using var process = Process.Start(psi);
+            if (process == null)
+                return (null, null);
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            if (process.ExitCode != 0)
+                return (null, null);
+
+            var comment = stdout.Trim();
+            if (string.IsNullOrWhiteSpace(comment))
+                return (null, null);
+
+            // Parse metadata from comment format: "EventTimeUTC=...; Location=...; EventPath=..."
+            var parts = comment.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            string location = null;
+            string eventPath = null;
+
+            foreach (var part in parts)
+            {
+                var trimmed = part.Trim();
+                if (trimmed.StartsWith("Location=", StringComparison.OrdinalIgnoreCase))
+                {
+                    location = trimmed.Substring("Location=".Length).Trim();
+                }
+                else if (trimmed.StartsWith("EventPath=", StringComparison.OrdinalIgnoreCase))
+                {
+                    eventPath = trimmed.Substring("EventPath=".Length).Trim();
+                }
+            }
+
+            return (location, eventPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to read export metadata from {Path}", path);
+            return (null, null);
         }
     }
 
