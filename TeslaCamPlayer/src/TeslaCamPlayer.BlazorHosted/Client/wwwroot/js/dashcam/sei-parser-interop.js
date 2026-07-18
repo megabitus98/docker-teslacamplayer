@@ -4,44 +4,6 @@ let enumFields = null;
 const DEFAULT_PROTO_URL = new URL("./dashcam.proto", import.meta.url).href;
 const parsedCache = new Map();
 const DEFAULT_FRAME_DURATION_MS = 33.333; // ~30fps fallback
-const PROTO_TEXT = `
-syntax = "proto3";
-
-// SEI (Supplemental Enhancement Information) metadata embedded in Tesla dashcam video streams.
-message SeiMetadata {
-  uint32 version = 1;
-
-  enum Gear {
-    GEAR_PARK = 0;
-    GEAR_DRIVE = 1;
-    GEAR_REVERSE = 2;
-    GEAR_NEUTRAL = 3;
-  }
-  Gear gear_state = 2;
-
-  uint64 frame_seq_no = 3;
-  float vehicle_speed_mps = 4;
-  float accelerator_pedal_position = 5;
-  float steering_wheel_angle = 6;
-  bool blinker_on_left = 7;
-  bool blinker_on_right = 8;
-  bool brake_applied = 9;
-
-  enum AutopilotState {
-    NONE = 0;
-    SELF_DRIVING = 1;
-    AUTOSTEER = 2;
-    TACC = 3;
-  }
-  AutopilotState autopilot_state = 10;
-  double latitude_deg = 11;
-  double longitude_deg = 12;
-  double heading_deg = 13;
-  double linear_acceleration_mps2_x = 14;
-  double linear_acceleration_mps2_y = 15;
-  double linear_acceleration_mps2_z = 16;
-}
-`;
 
 function buildFrameTimeline(frames, config) {
     const frameCount = frames?.length ?? 0;
@@ -107,17 +69,20 @@ async function ensureInitialized(protoPath = null) {
 export async function initializeProtobuf(protoPath) {
     if (SeiMetadata) return;
 
-    let protoText = PROTO_TEXT;
-    if (protoPath) {
-        try {
-            const response = await fetch(protoPath);
-            if (response.ok) {
-                protoText = await response.text();
-            }
-        } catch {
-            // fallback to embedded text
-        }
+    const protoUrl = protoPath || DEFAULT_PROTO_URL;
+    let response;
+    try {
+        response = await fetch(protoUrl);
+    } catch (error) {
+        console.error(`Failed to fetch SEI proto schema from ${protoUrl}`, error);
+        throw error;
     }
+    if (!response.ok) {
+        const message = `Failed to fetch SEI proto schema from ${protoUrl} (HTTP ${response.status})`;
+        console.error(message);
+        throw new Error(message);
+    }
+    const protoText = await response.text();
 
     const proto = (globalThis.protobuf || window?.protobuf);
     if (!proto) {

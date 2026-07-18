@@ -85,7 +85,11 @@ else
 app.UseHttpsRedirection();
 
 app.UseBlazorFrameworkFiles();
-app.UseStaticFiles();
+
+// .proto is not in the default MIME map; without this the client's fetch of dashcam.proto 404s.
+var staticContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+staticContentTypeProvider.Mappings[".proto"] = "text/plain";
+app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = staticContentTypeProvider });
 
 app.UseRouting();
 
