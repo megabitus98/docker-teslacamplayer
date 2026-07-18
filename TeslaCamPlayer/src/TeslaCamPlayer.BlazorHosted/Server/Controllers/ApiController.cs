@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using Serilog;
-using System.Diagnostics;
 using System.Web;
 using TeslaCamPlayer.BlazorHosted.Server.Helpers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers;
@@ -214,69 +213,6 @@ public class ApiController : ControllerBase
         return PhysicalFile(path, contentType, enableRangeProcessing);
     }
 
-    private static (string location, string eventPath) TryReadExportMetadata(string path)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("ffprobe")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            psi.ArgumentList.Add("-v");
-            psi.ArgumentList.Add("error");
-            psi.ArgumentList.Add("-hide_banner");
-            psi.ArgumentList.Add("-show_entries");
-            psi.ArgumentList.Add("format_tags=comment");
-            psi.ArgumentList.Add("-of");
-            psi.ArgumentList.Add("default=noprint_wrappers=1:nokey=1");
-            psi.ArgumentList.Add(path);
-
-            using var process = Process.Start(psi);
-            if (process == null)
-                return (null, null);
-
-            var stdout = process.StandardOutput.ReadToEnd();
-            process.StandardError.ReadToEnd();
-            process.WaitForExit();
-
-            if (process.ExitCode != 0)
-                return (null, null);
-
-            var comment = stdout.Trim();
-            if (string.IsNullOrWhiteSpace(comment))
-                return (null, null);
-
-            // Parse metadata from comment format: "EventTimeUTC=...; Location=...; EventPath=..."
-            var parts = comment.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-            string location = null;
-            string eventPath = null;
-
-            foreach (var part in parts)
-            {
-                var trimmed = part.Trim();
-                if (trimmed.StartsWith("Location=", StringComparison.OrdinalIgnoreCase))
-                {
-                    location = trimmed.Substring("Location=".Length).Trim();
-                }
-                else if (trimmed.StartsWith("EventPath=", StringComparison.OrdinalIgnoreCase))
-                {
-                    eventPath = trimmed.Substring("EventPath=".Length).Trim();
-                }
-            }
-
-            return (location, eventPath);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "Failed to read export metadata from {Path}", path);
-            return (null, null);
-        }
-    }
-
     [HttpGet]
     public IActionResult ExportFile(string path)
     {
@@ -286,80 +222,13 @@ public class ApiController : ControllerBase
         var exportsRoot = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
         if (!PathSafety.IsUnder(exportsRoot, path)) return BadRequest("Invalid path");
         if (!System.IO.File.Exists(path)) return NotFound();
-        var contentType = "application/octet-stream";
-        var fileName = Path.GetFileName(path);
-        var result = new PhysicalFileResult(path, contentType)
-        {
-            EnableRangeProcessing = true,
-            FileDownloadName = fileName
-        };
-        return result;
-    }
-
-    public class ExportItem
-    {
-        public string FileName { get; set; }
-        public string Url { get; set; }
-        public long SizeBytes { get; set; }
-        public DateTime CreatedUtc { get; set; }
-        public string JobId { get; set; }
-        public ExportStatus Status { get; set; }
-        public string Location { get; set; }
-        public string EventPath { get; set; }
+        // Same serving mechanism as ServeFile: PhysicalFile helper with range processing.
+        return PhysicalFile(path, "application/octet-stream", Path.GetFileName(path), enableRangeProcessing: true);
     }
 
     [HttpGet]
-    public IActionResult ListExports()
-    {
-        var root = _settingsProvider.Settings.ExportRootPath;
-        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-            return Ok(Array.Empty<ExportItem>());
-
-        var items = new List<ExportItem>();
-        foreach (var path in Directory.EnumerateFiles(root))
-        {
-            try
-            {
-                var fi = new FileInfo(path);
-                var jobId = Path.GetFileNameWithoutExtension(fi.Name);
-                var st = _exportService.GetStatus(jobId) ?? new ExportStatus
-                {
-                    JobId = jobId,
-                    State = ExportState.Completed,
-                    Percent = 100
-                };
-
-                string url;
-                var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot", "exports");
-                if (PathSafety.IsUnder(Path.GetFullPath(wwwroot), path))
-                {
-                    url = "/exports/" + fi.Name;
-                }
-                else
-                {
-                    url = $"/Api/ExportFile?path={Uri.EscapeDataString(Path.GetFullPath(path))}";
-                }
-
-                var (location, eventPath) = TryReadExportMetadata(fi.FullName);
-                items.Add(new ExportItem
-                {
-                    FileName = fi.Name,
-                    Url = url,
-                    SizeBytes = fi.Length,
-                    CreatedUtc = fi.CreationTimeUtc,
-                    JobId = jobId,
-                    Status = st,
-                    Location = location,
-                    EventPath = eventPath
-                });
-            }
-            catch { }
-        }
-
-        // Sort newest first
-        items.Sort((a, b) => b.CreatedUtc.CompareTo(a.CreatedUtc));
-        return Ok(items);
-    }
+    public async Task<IActionResult> ListExports()
+        => Ok(await _exportService.ListExportsAsync());
 
     [HttpPost]
     public async Task<IActionResult> StartExport([FromBody] ExportRequest request)
@@ -411,26 +280,7 @@ public class ApiController : ControllerBase
 
         try
         {
-            var exportRoot = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
-            if (string.IsNullOrWhiteSpace(exportRoot) || !Directory.Exists(exportRoot))
-                return NotFound("Export directory not found");
-
-            // Find the export file by jobId
-            var files = Directory.EnumerateFiles(exportRoot)
-                .Where(f => Path.GetFileNameWithoutExtension(f).Equals(jobId, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (!files.Any())
-                return NotFound("Export file not found");
-
-            // Delete all matching files (should typically be just one)
-            foreach (var file in files)
-            {
-                System.IO.File.Delete(file);
-                Log.Information("Deleted export file: {File}", file);
-            }
-
-            return Ok();
+            return _exportService.DeleteExport(jobId, out var error) ? Ok() : NotFound(error);
         }
         catch (Exception ex)
         {
