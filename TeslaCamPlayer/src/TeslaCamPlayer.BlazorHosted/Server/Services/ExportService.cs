@@ -136,7 +136,6 @@ public class ExportService : IExportService
 
     private async Task RunExportAsync(string jobId, ExportRequest request, CancellationToken cancel)
     {
-        string srtPath = null;
         string hudFramesDir = null;
         try
         {
@@ -850,12 +849,6 @@ public class ExportService : IExportService
         {
             if (_cancellations.TryRemove(jobId, out var c)) c.Dispose();
 
-            // Cleanup temporary SRT file
-            if (!string.IsNullOrEmpty(srtPath) && File.Exists(srtPath))
-            {
-                SafeDelete(srtPath);
-            }
-
             // Cleanup HUD frames directory
             if (!string.IsNullOrEmpty(hudFramesDir) && Directory.Exists(hudFramesDir))
             {
@@ -883,13 +876,6 @@ public class ExportService : IExportService
             Cameras.RightBPillar => "Right Pillar",
             _ => cam.ToString()
         };
-
-    private static string EscapePath(string p)
-    {
-        if (string.IsNullOrEmpty(p)) return p;
-        if (p.Contains(' ')) return $"\"{p}\"";
-        return p;
-    }
 
     private static string EscapeDrawText(string text)
         => text.Replace("\\", "\\\\").Replace(":", "\\:").Replace("'", "\\'");
@@ -985,14 +971,6 @@ public class ExportService : IExportService
             default: return ("medium", "20");
         }
     }
-
-    private static string QualityToQscale(string q)
-        => (q ?? "").ToLowerInvariant() switch
-        {
-            "high" => "3",
-            "low" => "7",
-            _ => "5"
-        };
 
     private string BuildDownloadUrl(string outputFile)
     {

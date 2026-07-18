@@ -73,18 +73,6 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         return results;
     }
 
-    public async Task ResetAsync()
-    {
-        await EnsureInitializedAsync();
-
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
-        await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM video_files";
-        await command.ExecuteNonQueryAsync();
-    }
-
     public async Task UpsertVideoFilesAsync(IEnumerable<VideoFile> videoFiles)
     {
         if (videoFiles == null)

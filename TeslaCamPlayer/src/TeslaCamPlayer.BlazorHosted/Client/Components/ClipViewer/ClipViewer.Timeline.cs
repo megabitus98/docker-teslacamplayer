@@ -29,7 +29,6 @@ public partial class ClipViewer
 
     private async Task TimelineSliderPointerUp()
     {
-        Console.WriteLine("Pointer up");
         await ScrubToSliderTime();
         _isScrubbing = false;
 

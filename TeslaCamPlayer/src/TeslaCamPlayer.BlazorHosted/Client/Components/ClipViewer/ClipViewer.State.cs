@@ -108,14 +108,7 @@ public partial class ClipViewer
             {
                 await Task.Delay(10, _loadSegmentCts.Token);
             }
-
-            Console.WriteLine("Loading done");
         }, _loadSegmentCts.Token), timeout);
-
-        if (completedTask == timeout)
-        {
-            Console.WriteLine("Loading timed out — continuing");
-        }
 
         if (wasPlaying)
         {
