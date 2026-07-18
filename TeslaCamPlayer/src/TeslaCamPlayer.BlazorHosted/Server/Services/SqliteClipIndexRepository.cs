@@ -9,6 +9,8 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Services;
 
 public class SqliteClipIndexRepository : IClipIndexRepository
 {
+    private const string VideoFileColumns = "file_path, event_folder, clip_type, start_ticks, camera, duration_ticks, is_encrypted";
+
     private readonly ISettingsProvider _settingsProvider;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private bool _initialized;
@@ -40,34 +42,14 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await EnsureInitializedAsync();
 
         var results = new List<VideoFile>();
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = @"SELECT file_path, event_folder, clip_type, start_ticks, camera, duration_ticks, is_encrypted FROM video_files";
+        command.CommandText = $"SELECT {VideoFileColumns} FROM video_files";
 
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            var filePath = reader.GetString(0);
-            var eventFolder = reader.IsDBNull(1) ? null : reader.GetString(1);
-            var clipType = (ClipType)reader.GetInt32(2);
-            var startTicks = reader.GetInt64(3);
-            var camera = (Cameras)reader.GetInt32(4);
-            var durationTicks = reader.GetInt64(5);
-            var isEncrypted = reader.GetInt32(6) != 0;
-
-            results.Add(new VideoFile
-            {
-                FilePath = filePath,
-                Url = $"/Api/Video/{Uri.EscapeDataString(filePath)}",
-                EventFolderName = eventFolder,
-                ClipType = clipType,
-                StartDate = new DateTime(startTicks),
-                Camera = camera,
-                Duration = TimeSpan.FromTicks(durationTicks),
-                IsEncrypted = isEncrypted
-            });
+            results.Add(MapVideoFile(reader));
         }
 
         return results;
@@ -88,8 +70,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
 
         await EnsureInitializedAsync();
 
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
+        await using var connection = await OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var sqliteTransaction = (SqliteTransaction)transaction;
 
@@ -192,8 +173,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
 
         await EnsureInitializedAsync();
 
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
+        await using var connection = await OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var sqliteTransaction = (SqliteTransaction)transaction;
 
@@ -224,44 +204,10 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await EnsureInitializedAsync();
 
         var results = new List<EventFolderInfo>();
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
 
-        var whereClauses = new List<string>();
-        if (clipTypes is { Length: > 0 })
-        {
-            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
-            whereClauses.Add($"clip_type IN ({typeParams})");
-            for (int i = 0; i < clipTypes.Length; i++)
-            {
-                var param = command.CreateParameter();
-                param.ParameterName = $"$type{i}";
-                param.Value = (int)clipTypes[i];
-                command.Parameters.Add(param);
-            }
-        }
-
-        if (fromDate.HasValue)
-        {
-            whereClauses.Add("start_ticks >= $fromTicks");
-            var param = command.CreateParameter();
-            param.ParameterName = "$fromTicks";
-            param.Value = fromDate.Value.Ticks;
-            command.Parameters.Add(param);
-        }
-
-        if (toDate.HasValue)
-        {
-            whereClauses.Add("start_ticks <= $toTicks");
-            var param = command.CreateParameter();
-            param.ParameterName = "$toTicks";
-            param.Value = toDate.Value.Ticks;
-            command.Parameters.Add(param);
-        }
-
-        var whereClause = whereClauses.Count > 0 ? $"WHERE {string.Join(" AND ", whereClauses)}" : "";
+        var whereClause = BuildWhereClause(command, clipTypes, fromDate, toDate);
 
         command.CommandText = $@"
             SELECT event_folder, directory_path, clip_type, MAX(start_ticks) as latest_ticks
@@ -307,14 +253,12 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await EnsureInitializedAsync();
 
         var results = new List<VideoFile>();
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
 
         var folderParams = string.Join(", ", folderList.Select((_, i) => $"$folder{i}"));
         command.CommandText = $@"
-            SELECT file_path, event_folder, clip_type, start_ticks, camera, duration_ticks, is_encrypted
+            SELECT {VideoFileColumns}
             FROM video_files
             WHERE event_folder IN ({folderParams})
             ORDER BY event_folder, start_ticks";
@@ -330,25 +274,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            var filePath = reader.GetString(0);
-            var eventFolder = reader.IsDBNull(1) ? null : reader.GetString(1);
-            var clipType = (ClipType)reader.GetInt32(2);
-            var startTicks = reader.GetInt64(3);
-            var camera = (Cameras)reader.GetInt32(4);
-            var durationTicks = reader.GetInt64(5);
-            var isEncrypted = reader.GetInt32(6) != 0;
-
-            results.Add(new VideoFile
-            {
-                FilePath = filePath,
-                Url = $"/Api/Video/{Uri.EscapeDataString(filePath)}",
-                EventFolderName = eventFolder,
-                ClipType = clipType,
-                StartDate = new DateTime(startTicks),
-                Camera = camera,
-                Duration = TimeSpan.FromTicks(durationTicks),
-                IsEncrypted = isEncrypted
-            });
+            results.Add(MapVideoFile(reader));
         }
 
         return results;
@@ -361,44 +287,10 @@ public class SqliteClipIndexRepository : IClipIndexRepository
     {
         await EnsureInitializedAsync();
 
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
 
-        var whereClauses = new List<string>();
-        if (clipTypes is { Length: > 0 })
-        {
-            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
-            whereClauses.Add($"clip_type IN ({typeParams})");
-            for (int i = 0; i < clipTypes.Length; i++)
-            {
-                var param = command.CreateParameter();
-                param.ParameterName = $"$type{i}";
-                param.Value = (int)clipTypes[i];
-                command.Parameters.Add(param);
-            }
-        }
-
-        if (fromDate.HasValue)
-        {
-            whereClauses.Add("start_ticks >= $fromTicks");
-            var param = command.CreateParameter();
-            param.ParameterName = "$fromTicks";
-            param.Value = fromDate.Value.Ticks;
-            command.Parameters.Add(param);
-        }
-
-        if (toDate.HasValue)
-        {
-            whereClauses.Add("start_ticks <= $toTicks");
-            var param = command.CreateParameter();
-            param.ParameterName = "$toTicks";
-            param.Value = toDate.Value.Ticks;
-            command.Parameters.Add(param);
-        }
-
-        var whereClause = whereClauses.Count > 0 ? $"WHERE {string.Join(" AND ", whereClauses)}" : "";
+        var whereClause = BuildWhereClause(command, clipTypes, fromDate, toDate);
 
         command.CommandText = $@"
             SELECT COUNT(DISTINCT event_folder)
@@ -413,29 +305,15 @@ public class SqliteClipIndexRepository : IClipIndexRepository
     {
         await EnsureInitializedAsync();
 
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
 
-        var whereClause = "";
-        if (clipTypes is { Length: > 0 })
-        {
-            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
-            whereClause = $"WHERE clip_type IN ({typeParams})";
-            for (int i = 0; i < clipTypes.Length; i++)
-            {
-                var param = command.CreateParameter();
-                param.ParameterName = $"$type{i}";
-                param.Value = (int)clipTypes[i];
-                command.Parameters.Add(param);
-            }
-        }
+        var whereClause = BuildWhereClause(command, clipTypes);
 
         // Get distinct dates by truncating ticks to day boundary
         // SQLite doesn't have native date functions for ticks, so we compute day boundaries
         command.CommandText = $@"
-            SELECT DISTINCT (start_ticks / 864000000000) * 864000000000 as day_ticks
+            SELECT DISTINCT (start_ticks / {TimeSpan.TicksPerDay}) * {TimeSpan.TicksPerDay} as day_ticks
             FROM video_files
             {whereClause}
             ORDER BY day_ticks DESC";
@@ -455,26 +333,10 @@ public class SqliteClipIndexRepository : IClipIndexRepository
     {
         await EnsureInitializedAsync();
 
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
 
-        var whereClauses = new List<string>();
-        if (clipTypes is { Length: > 0 })
-        {
-            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
-            whereClauses.Add($"clip_type IN ({typeParams})");
-            for (int i = 0; i < clipTypes.Length; i++)
-            {
-                var param = command.CreateParameter();
-                param.ParameterName = $"$type{i}";
-                param.Value = (int)clipTypes[i];
-                command.Parameters.Add(param);
-            }
-        }
-
-        var whereClause = whereClauses.Count > 0 ? $"WHERE {string.Join(" AND ", whereClauses)}" : "";
+        var whereClause = BuildWhereClause(command, clipTypes);
 
         // The list is ORDER BY latest_ticks DESC, so the index of the first event on the
         // target date equals the number of events whose latest_ticks is strictly greater
@@ -504,9 +366,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
     {
         await EnsureInitializedAsync();
 
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT MAX(start_ticks) FROM video_files";
 
@@ -522,9 +382,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await EnsureInitializedAsync();
 
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
-
+        await using var connection = await OpenConnectionAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT file_path FROM video_files";
 
@@ -548,8 +406,7 @@ public class SqliteClipIndexRepository : IClipIndexRepository
 
         await EnsureInitializedAsync();
 
-        await using var connection = new SqliteConnection(ConnectionString);
-        await connection.OpenAsync();
+        await using var connection = await OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
         var sqliteTransaction = (SqliteTransaction)transaction;
 
@@ -683,9 +540,82 @@ public class SqliteClipIndexRepository : IClipIndexRepository
         await alter.ExecuteNonQueryAsync();
     }
 
-    private static string NormalizeDirectory(string path)
+    internal static string NormalizeDirectory(string path)
     {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
         var normalized = path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
         return normalized.TrimEnd(Path.DirectorySeparatorChar);
+    }
+
+    private async Task<SqliteConnection> OpenConnectionAsync()
+    {
+        var connection = new SqliteConnection(ConnectionString);
+        try
+        {
+            await connection.OpenAsync();
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static VideoFile MapVideoFile(SqliteDataReader reader)
+    {
+        var filePath = reader.GetString(0);
+        return new VideoFile
+        {
+            FilePath = filePath,
+            Url = VideoFile.BuildApiUrl(filePath),
+            EventFolderName = reader.IsDBNull(1) ? null : reader.GetString(1),
+            ClipType = (ClipType)reader.GetInt32(2),
+            StartDate = new DateTime(reader.GetInt64(3)),
+            Camera = (Cameras)reader.GetInt32(4),
+            Duration = TimeSpan.FromTicks(reader.GetInt64(5)),
+            IsEncrypted = reader.GetInt32(6) != 0
+        };
+    }
+
+    private static string BuildWhereClause(SqliteCommand command, ClipType[] clipTypes, DateTime? fromDate = null, DateTime? toDate = null)
+    {
+        var whereClauses = new List<string>();
+        if (clipTypes is { Length: > 0 })
+        {
+            var typeParams = string.Join(", ", clipTypes.Select((_, i) => $"$type{i}"));
+            whereClauses.Add($"clip_type IN ({typeParams})");
+            for (int i = 0; i < clipTypes.Length; i++)
+            {
+                var param = command.CreateParameter();
+                param.ParameterName = $"$type{i}";
+                param.Value = (int)clipTypes[i];
+                command.Parameters.Add(param);
+            }
+        }
+
+        if (fromDate.HasValue)
+        {
+            whereClauses.Add("start_ticks >= $fromTicks");
+            var param = command.CreateParameter();
+            param.ParameterName = "$fromTicks";
+            param.Value = fromDate.Value.Ticks;
+            command.Parameters.Add(param);
+        }
+
+        if (toDate.HasValue)
+        {
+            whereClauses.Add("start_ticks <= $toTicks");
+            var param = command.CreateParameter();
+            param.ParameterName = "$toTicks";
+            param.Value = toDate.Value.Ticks;
+            command.Parameters.Add(param);
+        }
+
+        return whereClauses.Count > 0 ? $"WHERE {string.Join(" AND ", whereClauses)}" : "";
     }
 }

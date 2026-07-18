@@ -488,7 +488,7 @@ public partial class ClipsService : IClipsService
         {
             var dir = Path.GetDirectoryName(p);
             if (!string.IsNullOrEmpty(dir))
-                knownDirectories.Add(NormalizeDirectoryPath(dir));
+                knownDirectories.Add(SqliteClipIndexRepository.NormalizeDirectory(dir));
         }
 
         await UpdateCacheAsync(aggregatedResults, knownDirectories);
@@ -943,7 +943,7 @@ public partial class ClipsService : IClipsService
 
             // Prefer the set we just built from the disk enumeration — avoids a syscall per clip.
             // When that's not available (initial load), fall back to a real Directory.Exists.
-            var normalized = NormalizeDirectoryPath(clip.DirectoryPath);
+            var normalized = SqliteClipIndexRepository.NormalizeDirectory(clip.DirectoryPath);
             var exists = knownDirectories != null
                 ? knownDirectories.Contains(normalized)
                 : Directory.Exists(clip.DirectoryPath);
@@ -967,17 +967,6 @@ public partial class ClipsService : IClipsService
 
         removedDirectories = missing.ToArray();
         return filtered.ToArray();
-    }
-
-    private static string NormalizeDirectoryPath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return path;
-        }
-
-        var normalized = path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
-        return normalized.TrimEnd(Path.DirectorySeparatorChar);
     }
 
     private static IEnumerable<Clip> GetRecentClips(List<VideoFile> recentVideoFiles)
@@ -1088,7 +1077,7 @@ public partial class ClipsService : IClipsService
             return new VideoFile
             {
                 FilePath = path,
-                Url = $"/Api/Video/{Uri.EscapeDataString(path)}",
+                Url = VideoFile.BuildApiUrl(path),
                 EventFolderName = eventFolderName,
                 ClipType = clipType,
                 StartDate = date,
@@ -1195,7 +1184,7 @@ public partial class ClipsService : IClipsService
             // server-side consumers like export feed ffmpeg readable bytes. This clip is transient
             // (returned to the caller, never persisted to the index), so it's safe to diverge here.
             FilePath = playablePath,
-            Url = $"/Api/Video/{Uri.EscapeDataString(playablePath)}",
+            Url = VideoFile.BuildApiUrl(playablePath),
             EventFolderName = eventFolderName,
             ClipType = clipType,
             StartDate = date,
