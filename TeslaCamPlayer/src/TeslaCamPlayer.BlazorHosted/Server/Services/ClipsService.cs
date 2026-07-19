@@ -20,7 +20,7 @@ public partial class ClipsService : IClipsService
 {
     private const string NoThumbnailImageUrl = "/img/no-thumbnail.png";
     private static readonly Regex FileNameRegex = FileNameRegexGenerated();
-    private static Clip[] _cache;
+    private Clip[] _cache;
 
     private readonly ISettingsProvider _settingsProvider;
     private readonly IFfProbeService _ffProbeService;
@@ -30,9 +30,9 @@ public partial class ClipsService : IClipsService
     private readonly IClipDecryptionService _clipDecryptionService;
 
     // State for background progressive refresh
-    private static readonly object _refreshGate = new();
-    private static Task _refreshTask;
-    private static RefreshMode? _pendingFullRefresh;
+    private readonly object _refreshGate = new();
+    private Task _refreshTask;
+    private RefreshMode? _pendingFullRefresh;
 
     private enum RefreshMode { Incremental, Full }
 
@@ -57,6 +57,21 @@ public partial class ClipsService : IClipsService
 
     public void InvalidateCache()
     {
+        _cache = null;
+    }
+
+    public async Task RemoveEventAsync(string eventDir)
+    {
+        try
+        {
+            await _clipIndexRepository.RemoveByDirectoriesAsync(new[] { eventDir });
+        }
+        catch (Exception ex)
+        {
+            // Cache rebuilds prune missing directories, so a failed removal self-heals later.
+            Log.Error(ex, "Failed to remove deleted event {Path} from clip index.", eventDir);
+        }
+
         _cache = null;
     }
 
@@ -785,7 +800,7 @@ public partial class ClipsService : IClipsService
     }
 
     // Seeds the already-parsed files map from the in-memory clip cache so a refresh skips re-probing.
-    private static ConcurrentDictionary<string, VideoFile> SeedKnownFiles()
+    private ConcurrentDictionary<string, VideoFile> SeedKnownFiles()
     {
         var knownVideoFiles = new ConcurrentDictionary<string, VideoFile>(StringComparer.OrdinalIgnoreCase);
         foreach (var video in (_cache ?? Array.Empty<Clip>())

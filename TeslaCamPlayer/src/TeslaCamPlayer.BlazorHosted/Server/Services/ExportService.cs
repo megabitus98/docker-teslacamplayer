@@ -155,6 +155,9 @@ public class ExportService : IExportService
             {
                 var fi = new FileInfo(path);
                 var jobId = Path.GetFileNameWithoutExtension(fi.Name);
+                // In-progress or failed ffmpeg output — never a valid download.
+                if (jobId.EndsWith(".part", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 var st = GetStatus(jobId) ?? new ExportStatus
                 {
                     JobId = jobId,
@@ -217,6 +220,7 @@ public class ExportService : IExportService
     private async Task RunExportAsync(string jobId, ExportRequest request, CancellationToken cancel)
     {
         string hudFramesDir = null;
+        string tempOutputFile = null;
         try
         {
             // At this point the stored status is always the Pending one (Percent=0, no Eta/Url/Error),
@@ -298,6 +302,10 @@ public class ExportService : IExportService
 
             var ext = SanitizeFormat(request.Format);
             var outputFile = Path.Combine(exportDir, jobId + "." + ext);
+            // ffmpeg writes to a ".part" name; renamed to the final name only on success so
+            // failed/in-progress files never surface in ListExports (presence-on-disk = Completed).
+            // Keeps the real extension last so ffmpeg's muxer inference still works.
+            tempOutputFile = Path.Combine(exportDir, jobId + ".part." + ext);
 
             // Build argv tokens for ffmpeg. Use ArgumentList to avoid shell quoting issues.
             var argv = new List<string>();
@@ -806,7 +814,7 @@ public class ExportService : IExportService
             }
             catch { }
 
-            argv.Add(outputFile);
+            argv.Add(tempOutputFile);
 
             var totalSeconds = (end - start).TotalSeconds;
 
@@ -830,6 +838,8 @@ public class ExportService : IExportService
 
             var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var sw = Stopwatch.StartNew();
+            // Same cadence as RefreshProgressService; terminal states broadcast unthrottled elsewhere.
+            var lastProgressBroadcastUtc = DateTime.MinValue;
             proc.OutputDataReceived += (_, e) =>
             {
                 if (string.IsNullOrWhiteSpace(e.Data)) return;
@@ -842,6 +852,11 @@ public class ExportService : IExportService
                         var msStr = line.Substring("out_time_ms=".Length);
                         if (double.TryParse(msStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var outMs))
                         {
+                            var now = DateTime.UtcNow;
+                            if (now - lastProgressBroadcastUtc < TimeSpan.FromMilliseconds(250))
+                                return;
+                            lastProgressBroadcastUtc = now;
+
                             var sec = outMs / 1000000.0;
                             var pct = Math.Clamp(totalSeconds > 0 ? (sec / totalSeconds) * 100.0 : 0, 0, 100);
                             var eta = totalSeconds > 0 ? TimeSpan.FromSeconds(Math.Max(0, totalSeconds - sec)) : (TimeSpan?)null;
@@ -874,12 +889,15 @@ public class ExportService : IExportService
             if (cancel.IsCancellationRequested)
             {
                 SetState(jobId, ExportState.Canceled);
-                SafeDelete(outputFile);
+                SafeDelete(tempOutputFile);
                 return;
             }
 
             if (proc.ExitCode != 0)
                 throw new InvalidOperationException($"ffmpeg exited with {proc.ExitCode}");
+
+            File.Move(tempOutputFile, outputFile, overwrite: true);
+            tempOutputFile = null;
 
             var url = BuildDownloadUrl(outputFile);
             _outputs[jobId] = outputFile;
@@ -889,6 +907,7 @@ public class ExportService : IExportService
         {
             Log.Error(ex, "Export {JobId} failed", jobId);
             SetState(jobId, ExportState.Failed, errorMessage: ex.Message);
+            SafeDelete(tempOutputFile);
         }
         finally
         {

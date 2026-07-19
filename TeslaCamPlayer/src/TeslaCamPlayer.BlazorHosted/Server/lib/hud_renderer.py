@@ -589,9 +589,13 @@ def create_hud_frame(width, height, telemetry, use_mph, state=None, enable_locat
 
     gear = telemetry.get('gearState') or telemetry.get('gear_state') or telemetry.get('gear')
     brake = pick_bool(telemetry, ['brakeApplied', 'brake_applied'], False)
-    throttle_raw = pick_number(telemetry, ['throttlePct', 'acceleratorPedalPosition', 'accelerator_pedal_position'], 0) or 0
-    if throttle_raw <= 1.5:
-        throttle_raw *= 100
+    # throttlePct comes pre-normalized to 0-100 by HudRendererService — use it as-is;
+    # re-applying the 0-1 heuristic would inflate genuinely low values (e.g. 1% -> 100%).
+    throttle_raw = pick_number(telemetry, ['throttlePct'], None)
+    if throttle_raw is None:
+        throttle_raw = pick_number(telemetry, ['acceleratorPedalPosition', 'accelerator_pedal_position'], 0) or 0
+        if throttle_raw <= 1.2:  # some payloads report 0-1 range; same threshold as sei-hud.js/HudRendererService
+            throttle_raw *= 100
     throttle = clamp(throttle_raw / 100.0, 0.0, 1.0)
     steering_angle = pick_number(telemetry, ['steeringWheelAngle', 'steering_wheel_angle'], 0) or 0
     left_blinker = pick_bool(telemetry, ['leftBlinkerOn', 'blinker_on_left'], False)

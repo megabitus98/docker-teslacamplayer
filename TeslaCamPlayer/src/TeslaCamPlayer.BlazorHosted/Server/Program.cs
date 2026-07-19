@@ -19,7 +19,7 @@ builder.Services.AddRazorPages();
 builder.Services.AddSingleton<ISettingsProvider, SettingsProvider>();
 builder.Services.AddSingleton<IRefreshProgressService, RefreshProgressService>();
 builder.Services.AddSingleton<IClipIndexRepository, SqliteClipIndexRepository>();
-builder.Services.AddTransient<IClipsService, ClipsService>();
+builder.Services.AddSingleton<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ISeiParserService, SeiParserService>();
 builder.Services.AddTransient<IMp4TimingService, Mp4TimingService>();
