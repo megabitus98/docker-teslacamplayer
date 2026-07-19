@@ -73,22 +73,10 @@
     [Inject] HttpClient Http { get; set; }
     [Inject] StatusHubClient StatusHubClient { get; set; }
 
-    public class ExportItemVm
-    {
-        public string FileName { get; set; }
-        public string Url { get; set; }
-        public long SizeBytes { get; set; }
-        public DateTime CreatedUtc { get; set; }
-        public string JobId { get; set; }
-        public ExportStatus Status { get; set; }
-        public string Location { get; set; }
-        public string EventPath { get; set; }
-    }
-
     private readonly SemaphoreSlim _loadSemaphore = new(1, 1);
     private readonly HashSet<string> _canceling = new();
     private readonly HashSet<string> _deleting = new();
-    private readonly List<ExportItemVm> _items = new();
+    private readonly List<ExportItem> _items = new();
     private IDisposable _subscription;
     private bool _subscribedToAll;
 
@@ -113,7 +101,7 @@
         }
         else
         {
-            _items.Insert(0, new ExportItemVm
+            _items.Insert(0, new ExportItem
             {
                 JobId = status.JobId,
                 Status = status,
@@ -144,7 +132,7 @@
 
         try
         {
-            var data = await Http.GetFromJsonAsync<List<ExportItemVm>>("Api/ListExports");
+            var data = await Http.GetFromNewtonsoftJsonAsync<List<ExportItem>>("Api/ListExports");
             await InvokeAsync(() =>
             {
                 _items.Clear();

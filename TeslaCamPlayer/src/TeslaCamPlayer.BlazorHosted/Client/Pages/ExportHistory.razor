@@ -60,19 +60,7 @@
 </div>
 
 @code {
-    public class ExportItemVm
-    {
-        public string FileName { get; set; }
-        public string Url { get; set; }
-        public long SizeBytes { get; set; }
-        public DateTime CreatedUtc { get; set; }
-        public string JobId { get; set; }
-        public ExportStatus Status { get; set; }
-        public string Location { get; set; }
-        public string EventPath { get; set; }
-    }
-
-    private List<ExportItemVm> _items = new();
+    private List<ExportItem> _items = new();
     private System.Timers.Timer _timer;
     private readonly HashSet<string> _canceling = new();
     private readonly HashSet<string> _deleting = new();
@@ -89,8 +77,8 @@
     {
         try
         {
-            var data = await Http.GetFromJsonAsync<List<ExportItemVm>>("Api/ListExports");
-            _items = data ?? new List<ExportItemVm>();
+            var data = await Http.GetFromNewtonsoftJsonAsync<List<ExportItem>>("Api/ListExports");
+            _items = data ?? new List<ExportItem>();
 
             // Clean up tracking sets
             _canceling.RemoveWhere(id => _items.All(x => x.JobId != id || (x.Status?.State != ExportState.Running && x.Status?.State != ExportState.Pending)));

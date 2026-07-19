@@ -1,7 +1,10 @@
+using Google.Protobuf;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json;
 using Serilog;
-using System.Diagnostics;
+using System.Text;
 using System.Web;
+using TeslaCamPlayer.BlazorHosted.Server.Helpers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services;
@@ -21,6 +24,8 @@ public class ApiController : ControllerBase
     private readonly ISettingsProvider _settingsProvider;
     private readonly ITeslaAuthService _teslaAuthService;
     private readonly IClipDecryptionService _clipDecryptionService;
+    private readonly ISeiParserService _seiParser;
+    private readonly IMp4TimingService _mp4Timing;
 
     public ApiController(
         ISettingsProvider settingsProvider,
@@ -28,7 +33,9 @@ public class ApiController : ControllerBase
         IRefreshProgressService refreshProgressService,
         IExportService exportService,
         ITeslaAuthService teslaAuthService,
-        IClipDecryptionService clipDecryptionService)
+        IClipDecryptionService clipDecryptionService,
+        ISeiParserService seiParser,
+        IMp4TimingService mp4Timing)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
@@ -36,6 +43,8 @@ public class ApiController : ControllerBase
         _exportService = exportService;
         _teslaAuthService = teslaAuthService;
         _clipDecryptionService = clipDecryptionService;
+        _seiParser = seiParser;
+        _mp4Timing = mp4Timing;
     }
 
     [HttpGet]
@@ -74,26 +83,13 @@ public class ApiController : ControllerBase
 
         try
         {
-            rootFullPath = EnsureTrailingSeparator(Path.GetFullPath(clipsRootPath));
+            rootFullPath = PathSafety.EnsureTrailingSeparator(Path.GetFullPath(clipsRootPath));
             return true;
         }
         catch
         {
             return false;
         }
-    }
-
-    private static string EnsureTrailingSeparator(string path)
-        => path.EndsWith(Path.DirectorySeparatorChar)
-            ? path
-            : path + Path.DirectorySeparatorChar;
-
-    private static bool IsUnderRootPath(string path, string rootFullPath)
-    {
-        var fullPath = Path.GetFullPath(path);
-        var rootWithoutSeparator = rootFullPath.TrimEnd(Path.DirectorySeparatorChar);
-        return fullPath.Equals(rootWithoutSeparator, StringComparison.OrdinalIgnoreCase)
-            || fullPath.StartsWith(rootFullPath, StringComparison.OrdinalIgnoreCase);
     }
 
     [HttpGet]
@@ -117,7 +113,7 @@ public class ApiController : ControllerBase
         if (!TryGetRootFullPath(out var rootFullPath))
             return BadRequest("Clips root path is not configured.");
 
-        if (!IsUnderRootPath(fullPath, rootFullPath))
+        if (!PathSafety.IsUnder(rootFullPath, fullPath))
             return BadRequest("Invalid path");
 
         try
@@ -167,7 +163,7 @@ public class ApiController : ControllerBase
     }
 
     [HttpDelete]
-    public IActionResult DeleteEvent(string path)
+    public async Task<IActionResult> DeleteEvent(string path)
     {
         var settings = _settingsProvider.Settings;
         if (!settings.EnableDelete)
@@ -180,7 +176,7 @@ public class ApiController : ControllerBase
             return BadRequest("Invalid path");
 
         var fullPath = Path.GetFullPath(path);
-        if (!IsUnderRootPath(fullPath, rootFullPath))
+        if (!PathSafety.IsUnder(rootFullPath, fullPath))
             return BadRequest("Invalid path");
 
         try
@@ -188,6 +184,7 @@ public class ApiController : ControllerBase
             if (Directory.Exists(fullPath))
             {
                 Directory.Delete(fullPath, true);
+                await _clipsService.RemoveEventAsync(fullPath);
                 Log.Information("Deleted event folder: {Path}", fullPath);
                 return Ok();
             }
@@ -195,13 +192,50 @@ public class ApiController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error deleting directory: {ex.Message}");
+            Log.Error(ex, "Error deleting event folder {Path}", fullPath);
+            return StatusCode(500, "Error deleting directory");
         }
     }
 
     [HttpGet("{path}.mp4")]
     public IActionResult Video(string path)
         => ServeFile(path, ".mp4", "video/mp4", true);
+
+    // Serves the per-frame SEI telemetry of a clip as JSON so the browser HUD doesn't have to
+    // re-download and parse the whole MP4. Same route shape as Video: /Api/SeiData/{escaped}.mp4
+    [HttpGet("{path}.mp4")]
+    public async Task<IActionResult> SeiData(string path)
+    {
+        path = HttpUtility.UrlDecode(path) + ".mp4";
+        path = Path.GetFullPath(path);
+        if (!TryGetRootFullPath(out var rootFullPath))
+            return BadRequest("Clips root path is not configured.");
+
+        // Decrypted clips live in the cache directory, outside the clips root — allow those too.
+        if (!PathSafety.IsUnder(rootFullPath, path) && !_clipDecryptionService.IsCachePath(path))
+            return BadRequest("Invalid path");
+
+        if (!System.IO.File.Exists(path))
+            return NotFound();
+
+        var messages = _seiParser.ExtractSeiMessages(path);
+        var timeline = messages.Count > 0 ? await _mp4Timing.GetFrameTimelineAsync(path) : null;
+
+        // Protobuf JSON (camelCase fields, enum value names, defaults included) — the exact
+        // shape sei-hud.js normalizeTelemetry already understands.
+        var formatter = new JsonFormatter(JsonFormatter.Settings.Default.WithFormatDefaultValues(true));
+        var sb = new StringBuilder();
+        sb.Append("{\"frameStartsMs\":");
+        sb.Append(timeline?.FrameStartsMs != null ? JsonConvert.SerializeObject(timeline.FrameStartsMs) : "null");
+        sb.Append(",\"frames\":[");
+        for (var i = 0; i < messages.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(formatter.Format(messages[i]));
+        }
+        sb.Append("]}");
+        return Content(sb.ToString(), "application/json");
+    }
 
     [HttpGet("{path}.png")]
     public IActionResult Thumbnail(string path)
@@ -217,76 +251,13 @@ public class ApiController : ControllerBase
             return BadRequest("Clips root path is not configured.");
 
         // Decrypted clips live in the cache directory, outside the clips root — allow those too.
-        if (!IsUnderRootPath(path, rootFullPath) && !_clipDecryptionService.IsCachePath(path))
+        if (!PathSafety.IsUnder(rootFullPath, path) && !_clipDecryptionService.IsCachePath(path))
             return BadRequest($"File must be in subdirectory under \"{rootFullPath}\", but was \"{path}\"");
 
         if (!System.IO.File.Exists(path))
             return NotFound();
 
         return PhysicalFile(path, contentType, enableRangeProcessing);
-    }
-
-    private static (string location, string eventPath) TryReadExportMetadata(string path)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("ffprobe")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            psi.ArgumentList.Add("-v");
-            psi.ArgumentList.Add("error");
-            psi.ArgumentList.Add("-hide_banner");
-            psi.ArgumentList.Add("-show_entries");
-            psi.ArgumentList.Add("format_tags=comment");
-            psi.ArgumentList.Add("-of");
-            psi.ArgumentList.Add("default=noprint_wrappers=1:nokey=1");
-            psi.ArgumentList.Add(path);
-
-            using var process = Process.Start(psi);
-            if (process == null)
-                return (null, null);
-
-            var stdout = process.StandardOutput.ReadToEnd();
-            process.StandardError.ReadToEnd();
-            process.WaitForExit();
-
-            if (process.ExitCode != 0)
-                return (null, null);
-
-            var comment = stdout.Trim();
-            if (string.IsNullOrWhiteSpace(comment))
-                return (null, null);
-
-            // Parse metadata from comment format: "EventTimeUTC=...; Location=...; EventPath=..."
-            var parts = comment.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-            string location = null;
-            string eventPath = null;
-
-            foreach (var part in parts)
-            {
-                var trimmed = part.Trim();
-                if (trimmed.StartsWith("Location=", StringComparison.OrdinalIgnoreCase))
-                {
-                    location = trimmed.Substring("Location=".Length).Trim();
-                }
-                else if (trimmed.StartsWith("EventPath=", StringComparison.OrdinalIgnoreCase))
-                {
-                    eventPath = trimmed.Substring("EventPath=".Length).Trim();
-                }
-            }
-
-            return (location, eventPath);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "Failed to read export metadata from {Path}", path);
-            return (null, null);
-        }
     }
 
     [HttpGet]
@@ -296,82 +267,15 @@ public class ApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(path)) return BadRequest();
         path = Path.GetFullPath(path);
         var exportsRoot = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
-        if (!path.StartsWith(exportsRoot)) return BadRequest("Invalid path");
+        if (!PathSafety.IsUnder(exportsRoot, path)) return BadRequest("Invalid path");
         if (!System.IO.File.Exists(path)) return NotFound();
-        var contentType = "application/octet-stream";
-        var fileName = Path.GetFileName(path);
-        var result = new PhysicalFileResult(path, contentType)
-        {
-            EnableRangeProcessing = true,
-            FileDownloadName = fileName
-        };
-        return result;
-    }
-
-    public class ExportItem
-    {
-        public string FileName { get; set; }
-        public string Url { get; set; }
-        public long SizeBytes { get; set; }
-        public DateTime CreatedUtc { get; set; }
-        public string JobId { get; set; }
-        public ExportStatus Status { get; set; }
-        public string Location { get; set; }
-        public string EventPath { get; set; }
+        // Same serving mechanism as ServeFile: PhysicalFile helper with range processing.
+        return PhysicalFile(path, "application/octet-stream", Path.GetFileName(path), enableRangeProcessing: true);
     }
 
     [HttpGet]
-    public IActionResult ListExports()
-    {
-        var root = _settingsProvider.Settings.ExportRootPath;
-        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-            return Ok(Array.Empty<ExportItem>());
-
-        var items = new List<ExportItem>();
-        foreach (var path in Directory.EnumerateFiles(root))
-        {
-            try
-            {
-                var fi = new FileInfo(path);
-                var jobId = Path.GetFileNameWithoutExtension(fi.Name);
-                var st = _exportService.GetStatus(jobId) ?? new ExportStatus
-                {
-                    JobId = jobId,
-                    State = ExportState.Completed,
-                    Percent = 100
-                };
-
-                string url;
-                var wwwroot = Path.Combine(AppContext.BaseDirectory, "wwwroot", "exports");
-                if (Path.GetFullPath(path).StartsWith(Path.GetFullPath(wwwroot)))
-                {
-                    url = "/exports/" + fi.Name;
-                }
-                else
-                {
-                    url = $"/Api/ExportFile?path={Uri.EscapeDataString(Path.GetFullPath(path))}";
-                }
-
-                var (location, eventPath) = TryReadExportMetadata(fi.FullName);
-                items.Add(new ExportItem
-                {
-                    FileName = fi.Name,
-                    Url = url,
-                    SizeBytes = fi.Length,
-                    CreatedUtc = fi.CreationTimeUtc,
-                    JobId = jobId,
-                    Status = st,
-                    Location = location,
-                    EventPath = eventPath
-                });
-            }
-            catch { }
-        }
-
-        // Sort newest first
-        items.Sort((a, b) => b.CreatedUtc.CompareTo(a.CreatedUtc));
-        return Ok(items);
-    }
+    public async Task<IActionResult> ListExports()
+        => Ok(await _exportService.ListExportsAsync());
 
     [HttpPost]
     public async Task<IActionResult> StartExport([FromBody] ExportRequest request)
@@ -390,7 +294,7 @@ public class ApiController : ControllerBase
         if (!TryGetRootFullPath(out var rootFullPath))
             return BadRequest("Clips root path is not configured.");
 
-        if (!IsUnderRootPath(fullPath, rootFullPath))
+        if (!PathSafety.IsUnder(rootFullPath, fullPath))
             return BadRequest("Clip path is invalid");
 
         request.ClipDirectoryPath = fullPath;
@@ -423,31 +327,12 @@ public class ApiController : ControllerBase
 
         try
         {
-            var exportRoot = Path.GetFullPath(_settingsProvider.Settings.ExportRootPath);
-            if (string.IsNullOrWhiteSpace(exportRoot) || !Directory.Exists(exportRoot))
-                return NotFound("Export directory not found");
-
-            // Find the export file by jobId
-            var files = Directory.EnumerateFiles(exportRoot)
-                .Where(f => Path.GetFileNameWithoutExtension(f).Equals(jobId, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (!files.Any())
-                return NotFound("Export file not found");
-
-            // Delete all matching files (should typically be just one)
-            foreach (var file in files)
-            {
-                System.IO.File.Delete(file);
-                Log.Information("Deleted export file: {File}", file);
-            }
-
-            return Ok();
+            return _exportService.DeleteExport(jobId, out var error) ? Ok() : NotFound(error);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Error deleting export file for job {JobId}", jobId);
-            return StatusCode(500, $"Error deleting export: {ex.Message}");
+            return StatusCode(500, "Error deleting export");
         }
     }
 }

@@ -19,7 +19,7 @@ builder.Services.AddRazorPages();
 builder.Services.AddSingleton<ISettingsProvider, SettingsProvider>();
 builder.Services.AddSingleton<IRefreshProgressService, RefreshProgressService>();
 builder.Services.AddSingleton<IClipIndexRepository, SqliteClipIndexRepository>();
-builder.Services.AddTransient<IClipsService, ClipsService>();
+builder.Services.AddSingleton<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
 builder.Services.AddSingleton<ISeiParserService, SeiParserService>();
 builder.Services.AddTransient<IMp4TimingService, Mp4TimingService>();
@@ -85,7 +85,11 @@ else
 app.UseHttpsRedirection();
 
 app.UseBlazorFrameworkFiles();
-app.UseStaticFiles();
+
+// .proto is not in the default MIME map; without this the client's fetch of dashcam.proto 404s.
+var staticContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+staticContentTypeProvider.Mappings[".proto"] = "text/plain";
+app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = staticContentTypeProvider });
 
 app.UseRouting();
 

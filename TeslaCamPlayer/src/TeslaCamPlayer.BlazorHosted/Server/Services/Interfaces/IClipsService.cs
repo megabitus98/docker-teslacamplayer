@@ -6,6 +6,11 @@ public interface IClipsService
 {
     void InvalidateCache();
 
+    /// <summary>
+    /// Removes a deleted event folder from the clip index and invalidates the in-memory cache.
+    /// </summary>
+    Task RemoveEventAsync(string eventDir);
+
     Task<Clip[]> GetClipsAsync(bool refreshCache = false);
 
     Task<ClipPagedResponse> GetClipsPagedAsync(

@@ -34,7 +34,7 @@ public class SettingsProvider : ISettingsProvider
         {
             lock (_gate)
             {
-                return Clone(_settings);
+                return _settings.Clone();
             }
         }
     }
@@ -44,7 +44,7 @@ public class SettingsProvider : ISettingsProvider
         lock (_gate)
         {
             var persisted = Clone(_persistedSettings);
-            return BuildResponse(Clone(_settings), BuildSettings(false, null), persisted);
+            return BuildResponse(_settings.Clone(), BuildSettings(false, null), persisted);
         }
     }
 
@@ -55,7 +55,7 @@ public class SettingsProvider : ISettingsProvider
             request ??= new SaveAppSettingsRequest();
 
             var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var before = Clone(_settings);
+            var before = _settings.Clone();
             var persisted = Clone(_persistedSettings);
             var baseline = BuildSettings(false, null);
             var candidateOverrides = new Dictionary<string, string?>(persisted.Values, StringComparer.OrdinalIgnoreCase);
@@ -122,7 +122,7 @@ public class SettingsProvider : ISettingsProvider
                     Success = false,
                     Message = "Some settings need attention.",
                     Errors = errors,
-                    Settings = BuildResponse(Clone(_settings), baseline, persisted, errors)
+                    Settings = BuildResponse(_settings.Clone(), baseline, persisted, errors)
                 };
             }
 
@@ -147,7 +147,7 @@ public class SettingsProvider : ISettingsProvider
                 Success = true,
                 Message = "Settings saved.",
                 RequiresClipRefresh = requiresClipRefresh,
-                Settings = BuildResponse(Clone(_settings), BuildSettings(false, null), Clone(_persistedSettings))
+                Settings = BuildResponse(_settings.Clone(), BuildSettings(false, null), Clone(_persistedSettings))
             };
         }
     }
@@ -560,26 +560,6 @@ public class SettingsProvider : ISettingsProvider
         File.Delete(testPath);
         return null;
     }
-
-    private static Settings Clone(Settings settings)
-        => new()
-        {
-            ClipsRootPath = settings.ClipsRootPath,
-            CacheFilePath = settings.CacheFilePath,
-            CacheDatabasePath = settings.CacheDatabasePath,
-            EnableDelete = settings.EnableDelete,
-            SpeedUnit = settings.SpeedUnit,
-            ExportRootPath = settings.ExportRootPath,
-            ExportRetentionHours = settings.ExportRetentionHours,
-            IndexingBatchSize = settings.IndexingBatchSize,
-            IndexingMinBatchSize = settings.IndexingMinBatchSize,
-            IndexingMaxMemoryUtilization = settings.IndexingMaxMemoryUtilization,
-            IndexingMemoryRecoveryDelaySeconds = settings.IndexingMemoryRecoveryDelaySeconds,
-            TeslaRefreshToken = settings.TeslaRefreshToken,
-            TeslaAccessToken = settings.TeslaAccessToken,
-            DecryptedCachePath = settings.DecryptedCachePath,
-            DecryptedCacheMaxGb = settings.DecryptedCacheMaxGb
-        };
 
     private static PersistedSettings Clone(PersistedSettings settings)
         => new()
