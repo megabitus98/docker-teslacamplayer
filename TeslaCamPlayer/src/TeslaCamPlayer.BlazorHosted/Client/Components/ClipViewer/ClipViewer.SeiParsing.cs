@@ -28,9 +28,6 @@ public partial class ClipViewer
             _seiParserModule = await JsRuntime.InvokeAsync<IJSObjectReference>(
                 "import", "./js/dashcam/sei-parser-interop.js");
 
-            // Initialize protobuf schema
-            await _seiParserModule.InvokeVoidAsync("initializeProtobuf");
-
             Console.WriteLine("SEI parsing initialized successfully");
         }
         catch (Exception ex)
@@ -84,7 +81,7 @@ public partial class ClipViewer
 
         try
         {
-            // Parse SEI metadata directly in JS (handles fetch + decode)
+            // Fetches the server-parsed SEI telemetry JSON for this video (/Api/SeiData)
             var result = await _seiParserModule.InvokeAsync<string>(
                 "parseVideoSeiFromUrl", videoFilePath);
 

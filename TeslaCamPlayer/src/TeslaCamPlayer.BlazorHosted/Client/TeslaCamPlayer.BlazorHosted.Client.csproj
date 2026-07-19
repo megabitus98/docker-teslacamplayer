@@ -25,21 +25,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <Content Update="wwwroot\js\dashcam\dashcam.proto"
-                 CopyToOutputDirectory="PreserveNewest"
-                 CopyToPublishDirectory="PreserveNewest" />
-    </ItemGroup>
-
-    <ItemGroup>
         <Folder Include="wwwroot\css\" />
     </ItemGroup>
-
-    <!-- Single source of truth for the SEI protobuf schema is Server/Models/SeiMetadata.proto.
-         dashcam.proto is overwritten from it on every build - do not edit dashcam.proto directly. -->
-    <Target Name="CopySeiProtoSchema" BeforeTargets="BeforeBuild">
-        <Copy SourceFiles="..\Server\Models\SeiMetadata.proto"
-              DestinationFiles="wwwroot\js\dashcam\dashcam.proto"
-              SkipUnchangedFiles="true" />
-    </Target>
 
 </Project>

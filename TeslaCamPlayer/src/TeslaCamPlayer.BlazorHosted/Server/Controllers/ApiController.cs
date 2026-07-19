@@ -1,5 +1,8 @@
+using Google.Protobuf;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json;
 using Serilog;
+using System.Text;
 using System.Web;
 using TeslaCamPlayer.BlazorHosted.Server.Helpers;
 using TeslaCamPlayer.BlazorHosted.Server.Providers;
@@ -21,6 +24,8 @@ public class ApiController : ControllerBase
     private readonly ISettingsProvider _settingsProvider;
     private readonly ITeslaAuthService _teslaAuthService;
     private readonly IClipDecryptionService _clipDecryptionService;
+    private readonly ISeiParserService _seiParser;
+    private readonly IMp4TimingService _mp4Timing;
 
     public ApiController(
         ISettingsProvider settingsProvider,
@@ -28,7 +33,9 @@ public class ApiController : ControllerBase
         IRefreshProgressService refreshProgressService,
         IExportService exportService,
         ITeslaAuthService teslaAuthService,
-        IClipDecryptionService clipDecryptionService)
+        IClipDecryptionService clipDecryptionService,
+        ISeiParserService seiParser,
+        IMp4TimingService mp4Timing)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
@@ -36,6 +43,8 @@ public class ApiController : ControllerBase
         _exportService = exportService;
         _teslaAuthService = teslaAuthService;
         _clipDecryptionService = clipDecryptionService;
+        _seiParser = seiParser;
+        _mp4Timing = mp4Timing;
     }
 
     [HttpGet]
@@ -154,7 +163,7 @@ public class ApiController : ControllerBase
     }
 
     [HttpDelete]
-    public IActionResult DeleteEvent(string path)
+    public async Task<IActionResult> DeleteEvent(string path)
     {
         var settings = _settingsProvider.Settings;
         if (!settings.EnableDelete)
@@ -175,6 +184,7 @@ public class ApiController : ControllerBase
             if (Directory.Exists(fullPath))
             {
                 Directory.Delete(fullPath, true);
+                await _clipsService.RemoveEventAsync(fullPath);
                 Log.Information("Deleted event folder: {Path}", fullPath);
                 return Ok();
             }
@@ -182,13 +192,50 @@ public class ApiController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, $"Error deleting directory: {ex.Message}");
+            Log.Error(ex, "Error deleting event folder {Path}", fullPath);
+            return StatusCode(500, "Error deleting directory");
         }
     }
 
     [HttpGet("{path}.mp4")]
     public IActionResult Video(string path)
         => ServeFile(path, ".mp4", "video/mp4", true);
+
+    // Serves the per-frame SEI telemetry of a clip as JSON so the browser HUD doesn't have to
+    // re-download and parse the whole MP4. Same route shape as Video: /Api/SeiData/{escaped}.mp4
+    [HttpGet("{path}.mp4")]
+    public async Task<IActionResult> SeiData(string path)
+    {
+        path = HttpUtility.UrlDecode(path) + ".mp4";
+        path = Path.GetFullPath(path);
+        if (!TryGetRootFullPath(out var rootFullPath))
+            return BadRequest("Clips root path is not configured.");
+
+        // Decrypted clips live in the cache directory, outside the clips root — allow those too.
+        if (!PathSafety.IsUnder(rootFullPath, path) && !_clipDecryptionService.IsCachePath(path))
+            return BadRequest("Invalid path");
+
+        if (!System.IO.File.Exists(path))
+            return NotFound();
+
+        var messages = _seiParser.ExtractSeiMessages(path);
+        var timeline = messages.Count > 0 ? await _mp4Timing.GetFrameTimelineAsync(path) : null;
+
+        // Protobuf JSON (camelCase fields, enum value names, defaults included) — the exact
+        // shape sei-hud.js normalizeTelemetry already understands.
+        var formatter = new JsonFormatter(JsonFormatter.Settings.Default.WithFormatDefaultValues(true));
+        var sb = new StringBuilder();
+        sb.Append("{\"frameStartsMs\":");
+        sb.Append(timeline?.FrameStartsMs != null ? JsonConvert.SerializeObject(timeline.FrameStartsMs) : "null");
+        sb.Append(",\"frames\":[");
+        for (var i = 0; i < messages.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(formatter.Format(messages[i]));
+        }
+        sb.Append("]}");
+        return Content(sb.ToString(), "application/json");
+    }
 
     [HttpGet("{path}.png")]
     public IActionResult Thumbnail(string path)
@@ -285,7 +332,7 @@ public class ApiController : ControllerBase
         catch (Exception ex)
         {
             Log.Error(ex, "Error deleting export file for job {JobId}", jobId);
-            return StatusCode(500, $"Error deleting export: {ex.Message}");
+            return StatusCode(500, "Error deleting export");
         }
     }
 }
