@@ -7,6 +7,41 @@ default template plus the auto-generated commit list.
 
 ---
 
+## v0.4.0
+
+Server-side SEI telemetry and a wave of long-standing bug fixes from the
+architecture audit.
+
+### Highlights
+
+- **Server-side SEI telemetry** — new `/Api/SeiData` endpoint parses the
+  per-frame HUD telemetry on the server. The browser HUD now fetches a
+  small JSON payload instead of re-downloading the entire MP4 for every
+  clip it plays, and the protobufjs CDN dependency is gone — the player
+  now works fully offline / self-contained.
+
+### Fixes
+
+- Failed or in-progress exports no longer surface as completed downloads:
+  ffmpeg writes to a temp name that is renamed only on success, and
+  partial files are cleaned up on failure.
+- Deleting an event now removes it from the clip index immediately
+  instead of leaving a stale entry until the next full refresh.
+- Export progress broadcasts are throttled (250 ms) like refresh
+  progress, instead of firing on every ffmpeg progress line.
+- API error responses no longer leak raw exception text.
+- `ClipsService` is now a proper singleton — the ffprobe concurrency
+  gate is app-wide as intended.
+- HUD throttle-pedal heuristic unified across renderers (live playback
+  and export previously disagreed), and the export HUD no longer
+  re-inflates genuinely low pedal values to 100 %.
+
+### Compatibility
+
+No DB migration required; API and client remain backward compatible.
+Clips without embedded SEI telemetry (pre-2026 firmware) behave as
+before — the HUD simply stays hidden.
+
 ## v0.3.0
 
 Adds native decryption of **encrypted TeslaCam clips** (firmware 2026.20+)
