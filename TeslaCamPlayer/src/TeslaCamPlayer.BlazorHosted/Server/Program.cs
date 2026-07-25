@@ -21,6 +21,7 @@ builder.Services.AddSingleton<IRefreshProgressService, RefreshProgressService>()
 builder.Services.AddSingleton<IClipIndexRepository, SqliteClipIndexRepository>();
 builder.Services.AddSingleton<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
+builder.Services.AddSingleton<IFfmpegCapabilities, FfmpegCapabilitiesService>();
 builder.Services.AddSingleton<ISeiParserService, SeiParserService>();
 builder.Services.AddTransient<IMp4TimingService, Mp4TimingService>();
 builder.Services.AddHostedService<ExportCleanupService>();
@@ -32,6 +33,14 @@ builder.Services.AddHttpClient("tesla", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36");
 });
+// Update notifications: GitHub requires a User-Agent on API requests.
+builder.Services.AddHttpClient("github", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("TeslaCamPlayer");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+});
+builder.Services.AddSingleton<IUpdateCheckService, UpdateCheckService>();
+
 builder.Services.AddSingleton<ITeslaAuthService, TeslaAuthService>();
 builder.Services.AddSingleton<ITeslaKeyService, TeslaKeyService>();
 builder.Services.AddSingleton<IClipDecryptionService, ClipDecryptionService>();

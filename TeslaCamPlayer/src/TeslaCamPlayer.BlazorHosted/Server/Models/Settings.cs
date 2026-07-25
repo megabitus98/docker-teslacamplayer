@@ -1,4 +1,6 @@
-﻿namespace TeslaCamPlayer.BlazorHosted.Server.Models;
+﻿using TeslaCamPlayer.BlazorHosted.Shared.Models;
+
+namespace TeslaCamPlayer.BlazorHosted.Server.Models;
 
 public class Settings
 {
@@ -7,6 +9,21 @@ public class Settings
     public string CacheDatabasePath { get; set; }
     public bool EnableDelete { get; set; } = true;
     public string SpeedUnit { get; set; } = "kmh";
+
+    /// <summary>"12h" or "24h" — drives all clock displays and the export timestamp burn-in.</summary>
+    public string TimeFormat { get; set; } = TimeFormats.DefaultTimeFormat;
+
+    /// <summary>One of TimeFormats.DateFormatOptions — drives date displays and the export burn-in.</summary>
+    public string DateFormat { get; set; } = TimeFormats.DefaultDateFormat;
+
+    /// <summary>Glass-blur radius in px for the app chrome (app bar, drawer, control bar). 0 disables.</summary>
+    public int UiBlurPx { get; set; } = 8;
+
+    /// <summary>"auto" probes for a hardware H.264 encoder and uses -hwaccel auto decode; "off" is pure software (pre-hwaccel behavior).</summary>
+    public string ExportHwaccel { get; set; } = "auto";
+
+    /// <summary>Check GitHub for a newer release (max once per 24h). false = no outbound call at all.</summary>
+    public bool UpdateCheck { get; set; } = true;
     public string ExportRootPath { get; set; }
     public int ExportRetentionHours { get; set; } = 24;
     public int IndexingBatchSize { get; set; } = 1000;

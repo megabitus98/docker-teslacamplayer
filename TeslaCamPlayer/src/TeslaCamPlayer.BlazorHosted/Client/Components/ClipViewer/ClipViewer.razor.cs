@@ -25,6 +25,12 @@ public partial class ClipViewer : ComponentBase, IDisposable
     public string SpeedUnit { get; set; } = "kmh";
 
     [Parameter]
+    public string TimeFormat { get; set; } = TimeFormats.DefaultTimeFormat;
+
+    [Parameter]
+    public string DateFormat { get; set; } = TimeFormats.DefaultDateFormat;
+
+    [Parameter]
     public bool IsExportMode { get; set; }
 
     protected override void OnInitialized()
@@ -51,6 +57,10 @@ public partial class ClipViewer : ComponentBase, IDisposable
 
             tile.Player.Loaded += () => { _videoLoadedEventCount++; };
         }
+
+        // Keep tile labels inside the letterboxed video frame (self-updating via
+        // ResizeObserver + loadedmetadata after this one call).
+        try { JsRuntime?.InvokeVoidAsync("clipViewer.observeVideoFraming", _gridElement); } catch { }
     }
 
     protected override async Task OnParametersSetAsync()
@@ -71,9 +81,21 @@ public partial class ClipViewer : ComponentBase, IDisposable
         await InvokeAsync(StateHasChanged);
     }
 
+    private Tile? _triggerTile;
+
     public async Task SetClipAsync(Clip clip)
     {
         _clip = clip;
+        _triggerTile = clip?.Event.TriggerTileCamera() switch
+        {
+            Cameras.Front => Tile.Front,
+            Cameras.Back => Tile.Back,
+            Cameras.LeftRepeater => Tile.LeftRepeater,
+            Cameras.RightRepeater => Tile.RightRepeater,
+            Cameras.LeftBPillar => Tile.LeftPillar,
+            Cameras.RightBPillar => Tile.RightPillar,
+            _ => null
+        };
         await EnsurePlayersReadyAsync();
         TimelineValue = 0;
         _timelineMaxSeconds = (clip.EndDate - clip.StartDate).TotalSeconds;
@@ -160,7 +182,8 @@ public partial class ClipViewer : ComponentBase, IDisposable
     private string IntervalLabel((double Start, double End) interval)
     {
         var (start, end) = ToClipTime(interval);
-        return $"{start:hh:mm:ss tt} → {end:hh:mm:ss tt}";
+        var pattern = TimeFormats.TimePattern(TimeFormat);
+        return $"{start.ToString(pattern)} → {end.ToString(pattern)}";
     }
 
     public (IReadOnlyList<Cameras> OrderedCameras, int Columns) GetVisibleCamerasAndColumns()
@@ -194,10 +217,10 @@ public partial class ClipViewer : ComponentBase, IDisposable
     }
 
     private string ExportStartDisplay()
-        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.Start).ToString("hh:mm:ss tt");
+        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.Start).ToString(TimeFormats.TimePattern(TimeFormat));
 
     private string ExportEndDisplay()
-        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.End).ToString("hh:mm:ss tt");
+        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.End).ToString(TimeFormats.TimePattern(TimeFormat));
 
     private string ExportDurationDisplay()
     {

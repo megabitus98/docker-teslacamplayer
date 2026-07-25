@@ -47,6 +47,10 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
     private bool _enableDelete = true;
     private string _speedUnit = "kmh";
+    private string _timeFormat = TimeFormats.DefaultTimeFormat;
+    private string _dateFormat = TimeFormats.DefaultDateFormat;
+    private int _uiBlurPx = 8;
+    private UpdateCheckResult _updateCheck;
     private AppSettingsResponse _appSettings;
     private bool _pendingSetupDialog;
 
@@ -71,6 +75,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
         await StatusHubClient.EnsureConnectedAsync();
 
         await LoadConfigAsync();
+        _ = CheckForUpdateAsync();
         await LoadAppSettingsAsync();
         _pendingSetupDialog = _appSettings?.NeedsSetup == true;
 
@@ -84,12 +89,34 @@ public partial class Index : ComponentBase, IAsyncDisposable
             var config = await HttpClient.GetFromNewtonsoftJsonAsync<AppConfig>("Api/GetConfig");
             _enableDelete = config?.EnableDelete ?? true;
             _speedUnit = config?.SpeedUnit ?? "kmh";
+            _timeFormat = config?.TimeFormat ?? TimeFormats.DefaultTimeFormat;
+            _dateFormat = config?.DateFormat ?? TimeFormats.DefaultDateFormat;
+            _uiBlurPx = config?.UiBlurPx ?? 8;
         }
         catch
         {
             // If config fetch fails, default to showing delete (backward compatibility)
             _enableDelete = true;
             _speedUnit = "kmh";
+            _timeFormat = TimeFormats.DefaultTimeFormat;
+            _dateFormat = TimeFormats.DefaultDateFormat;
+            _uiBlurPx = 8;
+        }
+    }
+
+    private async Task CheckForUpdateAsync()
+    {
+        try
+        {
+            _updateCheck = await HttpClient.GetFromNewtonsoftJsonAsync<UpdateCheckResult>("Api/UpdateCheck");
+            if (_updateCheck?.UpdateAvailable == true)
+            {
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // Update info is best-effort; never block the app on it.
         }
     }
 

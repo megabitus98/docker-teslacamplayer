@@ -20,7 +20,15 @@
                     <VideoPlayer @key="@tile.VideoKey" @ref="tile.Player" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
                     @if (IsTileVisible(tile.Tile))
                     {
-                        <div class="tile-label"><span class="tile-label__text">@tile.Label</span></div>
+                        <div class="tile-label">
+                            <span class="tile-label__text">
+                                @if (tile.Tile == _triggerTile)
+                                {
+                                    <span class="tile-label__trigger-dot" aria-label="This camera triggered the event"></span>
+                                }
+                                @tile.Label
+                            </span>
+                        </div>
                     }
                 </div>
             }
@@ -86,6 +94,8 @@
                     <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(1.5))">1.5x</MudMenuItem>
                     <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(1.75))">1.75x</MudMenuItem>
                     <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(2.0))">2.0x</MudMenuItem>
+                    <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(3.0))">3.0x</MudMenuItem>
+                    <MudMenuItem OnClick="@(() => SetPlaybackSpeedAsync(4.0))">4.0x</MudMenuItem>
                 </MudMenu>
             </MudBadge>
         </div>
@@ -135,7 +145,7 @@
             }
         }
         <div class="seeker-slider-container @(IsExportMode ? "export-mode" : "")">
-            <div class="current-time-container">@(_clip?.StartDate.ToString("hh:mm:ss tt"))</div>
+            <div class="current-time-container">@(_clip?.StartDate.ToString(TimeFormats.TimePattern(TimeFormat)))</div>
             <div class="slider-container"
                  @ref="_sliderContainerRef"
                  @onpointermove="@OnSliderContainerPointerMove"
@@ -179,7 +189,7 @@
                 }
             </div>
             <div class="time-container">
-                @_clip?.EndDate.ToString("hh:mm:ss tt")
+                @_clip?.EndDate.ToString(TimeFormats.TimePattern(TimeFormat))
             </div>
         </div>
     </div>

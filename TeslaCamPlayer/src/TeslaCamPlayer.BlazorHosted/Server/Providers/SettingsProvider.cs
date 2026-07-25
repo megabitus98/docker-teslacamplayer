@@ -408,6 +408,19 @@ public class SettingsProvider : ISettingsProvider
             settings.SpeedUnit = "kmh";
         }
 
+        if (Array.IndexOf(TimeFormats.TimeFormatOptions, settings.TimeFormat) < 0)
+        {
+            settings.TimeFormat = TimeFormats.DefaultTimeFormat;
+        }
+
+        settings.DateFormat = TimeFormats.DatePattern(settings.DateFormat);
+        settings.UiBlurPx = Math.Clamp(settings.UiBlurPx, 0, 24);
+
+        if (settings.ExportHwaccel != "auto" && settings.ExportHwaccel != "off")
+        {
+            settings.ExportHwaccel = "auto";
+        }
+
         if (string.IsNullOrWhiteSpace(settings.CacheDatabasePath))
         {
             if (!string.IsNullOrWhiteSpace(settings.CacheFilePath))
@@ -626,6 +639,15 @@ public class SettingsProvider : ISettingsProvider
                 (settings, value) => settings.EnableDelete = bool.Parse(value),
                 ParseBool),
             new AppSettingDefinition(
+                nameof(Settings.UpdateCheck),
+                "Check for updates",
+                "Ask GitHub for the latest release at most once per day and show a notification when a newer version exists.",
+                "boolean",
+                new[] { "UPDATE_CHECK", "UpdateCheck" },
+                settings => settings.UpdateCheck ? "true" : "false",
+                (settings, value) => settings.UpdateCheck = bool.Parse(value),
+                ParseBool),
+            new AppSettingDefinition(
                 nameof(Settings.SpeedUnit),
                 "Speed unit",
                 "Speed display unit for telemetry overlays.",
@@ -635,6 +657,35 @@ public class SettingsProvider : ISettingsProvider
                 (settings, value) => settings.SpeedUnit = value,
                 ParseSpeedUnit,
                 options: new[] { "kmh", "mph" }),
+            new AppSettingDefinition(
+                nameof(Settings.TimeFormat),
+                "Time format",
+                "12-hour or 24-hour clock for the UI and exported timestamps.",
+                "select",
+                new[] { "TIME_FORMAT", "TimeFormat" },
+                settings => settings.TimeFormat,
+                (settings, value) => settings.TimeFormat = value,
+                value => ParseOneOf(value, TimeFormats.TimeFormatOptions),
+                options: TimeFormats.TimeFormatOptions),
+            new AppSettingDefinition(
+                nameof(Settings.DateFormat),
+                "Date format",
+                "Date layout for the UI and exported timestamps.",
+                "select",
+                new[] { "DATE_FORMAT", "DateFormat" },
+                settings => settings.DateFormat,
+                (settings, value) => settings.DateFormat = value,
+                value => ParseOneOf(value, TimeFormats.DateFormatOptions),
+                options: TimeFormats.DateFormatOptions),
+            new AppSettingDefinition(
+                nameof(Settings.UiBlurPx),
+                "Glass blur (px)",
+                "Frosted-glass blur radius for the app bar, drawer and control bar. 0 disables.",
+                "integer",
+                new[] { "UI_BLUR_PX", "UiBlurPx" },
+                settings => settings.UiBlurPx.ToString(CultureInfo.InvariantCulture),
+                (settings, value) => settings.UiBlurPx = int.Parse(value, CultureInfo.InvariantCulture),
+                value => ParseInt(value, min: 0, max: 24)),
             new AppSettingDefinition(
                 nameof(Settings.ExportRootPath),
                 "Export root path",
@@ -654,6 +705,16 @@ public class SettingsProvider : ISettingsProvider
                 settings => settings.ExportRetentionHours.ToString(CultureInfo.InvariantCulture),
                 (settings, value) => settings.ExportRetentionHours = int.Parse(value, CultureInfo.InvariantCulture),
                 value => ParseInt(value, min: 0)),
+            new AppSettingDefinition(
+                nameof(Settings.ExportHwaccel),
+                "Export hardware acceleration",
+                "auto: use GPU decode/encode when available (NVENC, QuickSync, VAAPI, VideoToolbox). off: always CPU (libx264).",
+                "select",
+                new[] { "EXPORT_HWACCEL", "ExportHwaccel" },
+                settings => settings.ExportHwaccel,
+                (settings, value) => settings.ExportHwaccel = value,
+                value => ParseOneOf(value, new[] { "auto", "off" }),
+                options: new[] { "auto", "off" }),
             new AppSettingDefinition(
                 nameof(Settings.IndexingBatchSize),
                 "Indexing batch size",
@@ -752,6 +813,20 @@ public class SettingsProvider : ISettingsProvider
         };
     }
 
+    private static ParseResult ParseOneOf(string? value, string[] options)
+    {
+        var trimmed = value?.Trim();
+        foreach (var option in options)
+        {
+            if (string.Equals(trimmed, option, StringComparison.OrdinalIgnoreCase))
+            {
+                return ParseResult.Ok(option);
+            }
+        }
+
+        return ParseResult.Fail($"Use one of: {string.Join(", ", options)}.");
+    }
+
     private static ParseResult ParseSpeedUnit(string? value)
     {
         var normalized = value?.Trim().ToLowerInvariant();
@@ -763,11 +838,13 @@ public class SettingsProvider : ISettingsProvider
         };
     }
 
-    private static ParseResult ParseInt(string? value, int min)
+    private static ParseResult ParseInt(string? value, int min, int? max = null)
     {
-        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) || result < min)
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) || result < min || (max.HasValue && result > max.Value))
         {
-            return ParseResult.Fail($"Use an integer greater than or equal to {min}.");
+            return ParseResult.Fail(max.HasValue
+                ? $"Use an integer between {min} and {max.Value}."
+                : $"Use an integer greater than or equal to {min}.");
         }
 
         return ParseResult.Ok(result.ToString(CultureInfo.InvariantCulture));

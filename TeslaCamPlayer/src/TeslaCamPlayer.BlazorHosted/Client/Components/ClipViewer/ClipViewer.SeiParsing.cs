@@ -26,7 +26,7 @@ public partial class ClipViewer
         try
         {
             _seiParserModule = await JsRuntime.InvokeAsync<IJSObjectReference>(
-                "import", "./js/dashcam/sei-parser-interop.js");
+                "import", "./js/dashcam/sei-parser-interop.js?v=0.6.0");
 
             Console.WriteLine("SEI parsing initialized successfully");
         }

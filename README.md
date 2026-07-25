@@ -71,7 +71,7 @@ Creates `dist/TeslaCamPlayer-Windows-x64.zip` containing:
 - Setup and run scripts
 - Sample configuration
 
-**Requirements:** FFmpeg, Python 3.8+, and Pillow library (see `README.txt` in the ZIP for details)
+**Requirements:** FFmpeg 6.1+, Python 3.8+, and Pillow library (see `README.txt` in the ZIP for details)
 
 ### Linux Portable Build
 
@@ -86,7 +86,7 @@ Creates `dist/TeslaCamPlayer-Linux-x64.tar.gz` containing:
 - Setup and run scripts
 - Sample configuration
 
-**Requirements:** ffmpeg, python3, and Pillow library (see `README.md` in the archive for details)
+**Requirements:** ffmpeg 6.1+, python3, and Pillow library (see `README.md` in the archive for details)
 
 ### Docker Build (Existing)
 
@@ -116,8 +116,13 @@ services:
       - TZ=Etc/UTC
       - EXPORT_RETENTION_HOURS=24
       - EXPORT_ROOT_PATH=/export
+      - EXPORT_HWACCEL=auto
       - ENABLE_DELETE=false
       - SPEED_UNIT=kmh
+      - TIME_FORMAT=12h
+      - DATE_FORMAT=dd MMM yy
+      - UI_BLUR_PX=8
+      - UPDATE_CHECK=true
     volumes:
       - path_to_appdata:/config
       - path_to_teslacam:/media
@@ -145,11 +150,28 @@ docker run -d \
 
 Exports dropped into `EXPORT_ROOT_PATH` are trimmed every hour based on `EXPORT_RETENTION_HOURS` (defaults to `24`). Set `EXPORT_RETENTION_HOURS=0` to disable automatic deletion entirely—the service logs at startup whether cleanup is active so you can confirm the setting took effect.
 
+## Hardware-accelerated export
+
+Exports use GPU encoding automatically when a working encoder is found
+(probed once at startup, in this order): Apple VideoToolbox, NVIDIA NVENC,
+Intel QuickSync, VAAPI. Software (libx264) is the fallback and the retry
+path — if a hardware encode fails mid-export, the export is retried once
+on CPU.
+
+For the GPU to be visible inside the container:
+
+- **Intel/AMD (VAAPI / QuickSync):** add `--device /dev/dri` (compose:
+  `devices: ["/dev/dri:/dev/dri"]`).
+- **NVIDIA (NVENC):** use the NVIDIA container runtime and add
+  `--gpus all`.
+
+Set `EXPORT_HWACCEL=off` to force pure CPU encoding.
+
 ## WebUI settings
 
 App-level environment variables are now bootstrap defaults. The WebUI prompts for settings on first run or when the clips path is invalid, and the settings button in the top bar lets you edit them later. Saved WebUI values are stored under `/config/teslacamplayer.settings.json` and take precedence over Docker environment variables until you reset that setting in the WebUI.
 
-Configurable app settings include `ClipsRootPath`, `CACHE_DATABASE_PATH`, `ENABLE_DELETE`, `SPEED_UNIT`, `EXPORT_ROOT_PATH`, `EXPORT_RETENTION_HOURS`, and the `INDEXING_*` tuning values.
+Configurable app settings include `ClipsRootPath`, `CACHE_DATABASE_PATH`, `ENABLE_DELETE`, `SPEED_UNIT`, `TIME_FORMAT`, `DATE_FORMAT`, `UI_BLUR_PX`, `UPDATE_CHECK`, `EXPORT_ROOT_PATH`, `EXPORT_RETENTION_HOURS`, `EXPORT_HWACCEL`, and the `INDEXING_*` tuning values.
 
 ## Decrypting encrypted clips (firmware 2026.20+)
 

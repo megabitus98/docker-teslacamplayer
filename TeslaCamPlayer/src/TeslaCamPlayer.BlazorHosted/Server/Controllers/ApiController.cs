@@ -28,6 +28,7 @@ public class ApiController : ControllerBase
     private readonly IClipDecryptionService _clipDecryptionService;
     private readonly ISeiParserService _seiParser;
     private readonly IMp4TimingService _mp4Timing;
+    private readonly IUpdateCheckService _updateCheckService;
 
     public ApiController(
         ISettingsProvider settingsProvider,
@@ -37,7 +38,8 @@ public class ApiController : ControllerBase
         ITeslaAuthService teslaAuthService,
         IClipDecryptionService clipDecryptionService,
         ISeiParserService seiParser,
-        IMp4TimingService mp4Timing)
+        IMp4TimingService mp4Timing,
+        IUpdateCheckService updateCheckService)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
@@ -47,6 +49,7 @@ public class ApiController : ControllerBase
         _clipDecryptionService = clipDecryptionService;
         _seiParser = seiParser;
         _mp4Timing = mp4Timing;
+        _updateCheckService = updateCheckService;
     }
 
     [HttpGet]
@@ -98,8 +101,19 @@ public class ApiController : ControllerBase
     public AppConfig GetConfig()
     {
         var settings = _settingsProvider.Settings;
-        return new AppConfig { EnableDelete = settings.EnableDelete, SpeedUnit = settings.SpeedUnit };
+        return new AppConfig
+        {
+            EnableDelete = settings.EnableDelete,
+            SpeedUnit = settings.SpeedUnit,
+            TimeFormat = settings.TimeFormat,
+            DateFormat = settings.DateFormat,
+            UiBlurPx = settings.UiBlurPx
+        };
     }
+
+    [HttpGet]
+    public Task<UpdateCheckResult> UpdateCheck(CancellationToken cancellationToken)
+        => _updateCheckService.GetAsync(cancellationToken);
 
     [HttpGet]
     public async Task<TeslaConnectionStatus> TeslaStatus(CancellationToken cancellationToken)

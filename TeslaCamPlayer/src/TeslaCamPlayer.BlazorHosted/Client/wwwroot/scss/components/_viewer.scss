@@ -154,15 +154,24 @@
     }
 
     .tile-label {
-        /* Fill the tile as an invisible overlay so the label is always inside */
+        /* Overlay aligned to the rendered video frame, not the tile box:
+           object-fit:contain letterboxes the video, and observeVideoFraming
+           (site.js) publishes the bar sizes as --video-inset-x/y per tile. */
         position: absolute;
-        inset: 0;
+        inset: var(--video-inset-y, 0) var(--video-inset-x, 0);
         display: flex;
         align-items: flex-end;
         justify-content: flex-end;
         padding: 12px;
         pointer-events: none;
         z-index: 2;
+        transition: opacity 120ms ease;
+    }
+
+    /* Hidden while the FLIP fullscreen animation scales the tile, else the text scales with it */
+    .grid-tile.is-flip-animating .tile-label {
+        opacity: 0;
+        transition: none;
     }
 
     .tile-label__text {
@@ -179,6 +188,16 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         display: inline-block;
+    }
+
+    .tile-label__trigger-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 6px;
+        border-radius: 50%;
+        background: var(--mud-palette-warning);
+        vertical-align: baseline;
     }
 
     .controls {

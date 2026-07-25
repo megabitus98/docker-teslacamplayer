@@ -7,6 +7,57 @@ default template plus the auto-generated commit list.
 
 ---
 
+## v0.5.1
+
+Hardware-accelerated exports plus a wave of quality-of-life features
+inspired by the Sentry Studio feature set.
+
+### Highlights
+
+- **Hardware-accelerated export** — exports now use GPU encoding when a
+  working encoder is available (Apple VideoToolbox, NVIDIA NVENC, Intel
+  QuickSync, VAAPI — probed once at startup with a real test encode, not
+  just listed capabilities). Decode uses `-hwaccel auto` the same way. If
+  a hardware encode fails mid-export, the export automatically retries
+  once on CPU. `EXPORT_HWACCEL=off` restores the exact previous
+  software-only pipeline. VAAPI/QuickSync need `--device /dev/dri`;
+  NVENC needs `--gpus all` — see the README.
+- **Time & date format settings** — `TIME_FORMAT` (12h/24h) and
+  `DATE_FORMAT` (four layouts) drive every clock in the UI *and* the
+  timestamp burned into exports, so the video always matches the screen.
+- **Event-trigger camera highlight** — the camera that fired the event
+  gets an amber dot in its tile label, so you look at the right footage
+  first. Exports carry the same mark: a round amber dot inside the
+  label chip of the trigger camera.
+- **Export overlays match the UI** — camera labels in exports are now
+  the same dark chips the player shows, drawn inside the footage
+  instead of on the letterbox bars.
+- **Faster review** — playback speeds now go up to 4x.
+- **Glass chrome** — the app bar, drawer and control bar get a
+  frosted-glass blur (`UI_BLUR_PX`, 0 disables it entirely).
+- **Update notification** — the app checks GitHub for a newer release at
+  most once per day and shows a badge on the version number linking to
+  the release. `UPDATE_CHECK=false` disables the outbound call
+  completely.
+
+### Fixes
+
+- Camera labels stay inside the video frame when a tile letterboxes,
+  instead of floating over the black bars, and no longer flash scaled
+  text during the fullscreen animation.
+- Event-list rows keep a visible gap between hover/active highlights.
+- The telemetry HUD's speed block no longer touches the video content
+  below the HUD strip.
+
+### Compatibility
+
+No migration required. All new settings default to the previous behavior
+or a gentle extension of it; `EXPORT_HWACCEL=off` reproduces the previous
+export pipeline byte for byte. Air-gapped setups: the update check fails
+silently and never surfaces an error. Portable builds that use a
+system-installed ffmpeg now need ffmpeg 6.1 or newer (the export label
+chips use per-side box borders).
+
 ## v0.5.0
 
 Export several moments from one event into a single video, plus a defect

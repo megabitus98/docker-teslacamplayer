@@ -41,6 +41,15 @@ body {
 
 .events-list {
     overflow-y: auto;
+
+    /* Rows are fixed-height for the virtualizer (margin must stay 0), so the gap
+       between hover/active highlights comes from transparent borders the
+       background doesn't paint under. */
+    .event {
+        border-top: 3px solid transparent;
+        border-bottom: 3px solid transparent;
+        background-clip: padding-box;
+    }
 }
 
 /* Allow long checkbox labels to wrap cleanly */

@@ -54,7 +54,7 @@
             _objRef ??= DotNetObjectReference.Create(this);
 
             _hudModule ??= await JsRuntime.InvokeAsync<IJSObjectReference>(
-                "import", "./js/dashcam/sei-hud-interop.js");
+                "import", "./js/dashcam/sei-hud-interop.js?v=0.6.0");
 
             _hudInstance = await _hudModule.InvokeAsync<IJSObjectReference>(
                 "initializeSeiHud", _hudContainerRef, _objRef, SpeedUnit);

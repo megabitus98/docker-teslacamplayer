@@ -56,7 +56,7 @@ echo TeslaCam Player - Windows Setup
 echo ================================
 echo.
 echo Before running this application, ensure you have:
-echo   1. FFmpeg installed and in your PATH (https://ffmpeg.org/download.html)
+echo   1. FFmpeg 6.1+ installed and in your PATH (https://ffmpeg.org/download.html)
 echo   2. Python 3.8+ installed (https://www.python.org/downloads/)
 echo   3. Python Pillow library: pip install Pillow
 echo.
