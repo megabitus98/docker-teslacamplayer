@@ -386,7 +386,13 @@ public class ExportService : IExportService
             int cellW = outW / cols;
             int cellH = outH / rows;
 
-            var labelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.4:x=10:y=8";
+            // Chip look mirroring the UI tile labels (dark pill, white text). Labels sit top-left
+            // per tile: the canvas bottom corners belong to the location and timestamp overlays.
+            var labelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8:x=12:y=12";
+            // The camera that triggered the event gets an amber chip — the export twin of the UI's
+            // amber dot (drawtext can't mix per-glyph colors, and a dot drowns in busy footage).
+            var triggerLabelFont = ":fontcolor=black:fontsize=20:box=1:boxcolor=0xFF9800@0.9:boxborderw=8:x=12:y=12";
+            var triggerCam = clip.Event.TriggerTileCamera();
 
             // Each chunk is normalised to the cell size before concat, so a black filler splices in
             // cleanly next to real footage. (Scaling per chunk instead of once after concat costs the
@@ -397,12 +403,19 @@ public class ExportService : IExportService
                 var parts = byCamera[cam];
                 var partLabels = new List<string>();
 
+                // Drawn between scale and pad so the chip sits inside the footage, not on the
+                // letterbox bars — the export twin of the UI's inside-the-frame labels.
+                var labelDraw = request.IncludeCameraLabels
+                    ? $",drawtext=text='{EscapeDrawText(CameraLabel(cam))}'{(cam == triggerCam ? triggerLabelFont : labelFont)}"
+                    : "";
+
                 for (int i = 0; i < parts.Count; i++)
                 {
                     var label = $"[{cam}_p{i}]";
                     if (parts[i].IsFiller)
                     {
-                        filter.Append($"color=c=black:size={cellW}x{cellH}:rate=30:duration={FormatTimeArg(parts[i].Duration)}{chunkFormat}");
+                        // Filler is already cell-sized; the label lands at the cell corner instead.
+                        filter.Append($"color=c=black:size={cellW}x{cellH}:rate=30:duration={FormatTimeArg(parts[i].Duration)}{labelDraw}{chunkFormat}");
                     }
                     else
                     {
@@ -410,7 +423,7 @@ public class ExportService : IExportService
                         // chunk to its exact length so the interval seams (and the timestamp windows
                         // gated on them) don't drift.
                         filter.Append($"[{inputIndexMap[(cam, i)]}:v]")
-                              .Append($"scale={cellW}:{cellH}:force_original_aspect_ratio=decrease,pad={cellW}:{cellH}:(ow-iw)/2:(oh-ih)/2{chunkFormat},fps=30")
+                              .Append($"scale={cellW}:{cellH}:force_original_aspect_ratio=decrease{labelDraw},pad={cellW}:{cellH}:(ow-iw)/2:(oh-ih)/2{chunkFormat},fps=30")
                               .Append($",trim=duration={FormatTimeArg(parts[i].Duration)},setpts=PTS-STARTPTS");
                     }
 
@@ -441,19 +454,7 @@ public class ExportService : IExportService
                           .Append(';');
                 }
 
-                var final = concatOut;
-                if (request.IncludeCameraLabels)
-                {
-                    var labelText = CameraLabel(cam);
-                    var labeled = $"[{cam}_labeled]";
-                    filter.Append(concatOut)
-                          .Append($"drawtext=text='{EscapeDrawText(labelText)}'{labelFont}")
-                          .Append(labeled)
-                          .Append(';');
-                    final = labeled;
-                }
-
-                camOutputs.Add(final);
+                camOutputs.Add(concatOut);
             }
 
             // xstack layout positions
@@ -503,10 +504,10 @@ public class ExportService : IExportService
                 if (!string.IsNullOrWhiteSpace(locationText))
                 {
                     var geo = "[geo]";
-                    var locFont = ":fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4";
+                    var locFont = ":fontcolor=white:fontsize=24:box=1:boxcolor=black@0.55:boxborderw=8";
                     filter.Append(';')
                           .Append('[').Append(finalLabel).Append(']')
-                          .Append($"drawtext=text='{EscapeDrawText(locationText)}'{locFont}:x=10:y=h-th-10")
+                          .Append($"drawtext=text='{EscapeDrawText(locationText)}'{locFont}:x=20:y=h-th-20")
                           .Append(geo);
                     finalLabel = "geo";
                 }
@@ -543,7 +544,7 @@ public class ExportService : IExportService
                     // Overshoot the last span so a final frame landing exactly on the boundary still draws.
                     var enableEnd = i == intervals.Count - 1 ? spanEnd + 1 : spanEnd;
                     filter.Append(',')
-                          .Append($@"drawtext=text='%{{pts\:localtime\:{FormatTimeArg(epoch)}\:{strftimePattern}}}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4:x=w-tw-10:y=h-th-10")
+                          .Append($@"drawtext=text='%{{pts\:localtime\:{FormatTimeArg(epoch)}\:{strftimePattern}}}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.55:boxborderw=8:x=w-tw-20:y=h-th-20")
                           .Append($":enable='gte(t,{FormatTimeArg(offsetSeconds)})*lt(t,{FormatTimeArg(enableEnd)})'");
                     offsetSeconds = spanEnd;
                 }
