@@ -389,9 +389,11 @@ public class ExportService : IExportService
             // Chip look mirroring the UI tile labels (dark pill, white text). Labels sit top-left
             // per tile: the canvas bottom corners belong to the location and timestamp overlays.
             var labelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8:x=12:y=12";
-            // The camera that triggered the event gets an amber chip — the export twin of the UI's
-            // amber dot (drawtext can't mix per-glyph colors, and a dot drowns in busy footage).
-            var triggerLabelFont = ":fontcolor=black:fontsize=20:box=1:boxcolor=0xFF9800@0.9:boxborderw=8:x=12:y=12";
+            // Trigger camera: chip shifts right and an amber marker sits beside it — the export twin
+            // of the UI's amber dot. drawbox, not a '●' glyph: ffmpeg 6.1's drawtext drops trailing
+            // glyphs when the text contains multi-byte UTF-8 (and strips leading spaces).
+            var triggerLabelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8:x=34:y=12";
+            const string triggerMarker = ",drawbox=x=12:y=17:w=10:h=10:color=0xFF9800@1:t=fill";
             var triggerCam = clip.Event.TriggerTileCamera();
 
             // Each chunk is normalised to the cell size before concat, so a black filler splices in
@@ -405,9 +407,12 @@ public class ExportService : IExportService
 
                 // Drawn between scale and pad so the chip sits inside the footage, not on the
                 // letterbox bars — the export twin of the UI's inside-the-frame labels.
-                var labelDraw = request.IncludeCameraLabels
-                    ? $",drawtext=text='{EscapeDrawText(CameraLabel(cam))}'{(cam == triggerCam ? triggerLabelFont : labelFont)}"
-                    : "";
+                var baseLabel = EscapeDrawText(CameraLabel(cam));
+                var labelDraw = !request.IncludeCameraLabels
+                    ? ""
+                    : cam == triggerCam
+                        ? $",drawtext=text='{baseLabel}'{triggerLabelFont}{triggerMarker}"
+                        : $",drawtext=text='{baseLabel}'{labelFont}";
 
                 for (int i = 0; i < parts.Count; i++)
                 {
