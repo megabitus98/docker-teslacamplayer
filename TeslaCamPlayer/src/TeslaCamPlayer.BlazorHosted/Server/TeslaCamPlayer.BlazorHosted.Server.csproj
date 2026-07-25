@@ -8,16 +8,17 @@
         <RuntimeIdentifiers>win-x64;win-x86;linux-x64;linux-musl-x64;linux-arm;linux-musl-arm;linux-arm64;linux-musl-arm64</RuntimeIdentifiers>
     </PropertyGroup>
 
-    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-        <DefineConstants>TRACE;WINDOWS</DefineConstants>
-    </PropertyGroup>
-
-    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-        <DefineConstants>TRACE;WINDOWS</DefineConstants>
-    </PropertyGroup>
-
-    <PropertyGroup Condition=" '$(Configuration)' == 'Release' And ('$(RuntimeIdentifier)' == 'linux-x64' Or '$(RuntimeIdentifier)' == 'linux-arm64' Or '$(RuntimeIdentifier)' == 'linux-musl-x64' Or '$(RuntimeIdentifier)' == 'linux-musl-arm64') ">
-        <DefineConstants>TRACE;LINUX</DefineConstants>
+    <!--
+        WINDOWS only for Windows targets; everything else (Linux incl. 32-bit ARM, macOS, and a plain
+        `dotnet run` on a non-Windows box) takes the LINUX path, which resolves ffprobe from PATH.
+        Keyed off the target rather than an RID whitelist so a new RID can't silently fall through to
+        WINDOWS. The Dockerfiles pass /p:DefineConstants=DOCKER, which overrides this.
+    -->
+    <PropertyGroup>
+        <IsWindowsTarget Condition=" '$(RuntimeIdentifier)' == '' ">$([MSBuild]::IsOSPlatform('Windows'))</IsWindowsTarget>
+        <IsWindowsTarget Condition=" '$(RuntimeIdentifier)' != '' ">$(RuntimeIdentifier.StartsWith('win'))</IsWindowsTarget>
+        <DefineConstants Condition=" '$(IsWindowsTarget)' == 'true' ">TRACE;WINDOWS</DefineConstants>
+        <DefineConstants Condition=" '$(IsWindowsTarget)' != 'true' ">TRACE;LINUX</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
