@@ -44,11 +44,7 @@ public class FfProbeServiceWindows : FfProbeService
     protected override string ExePath { get; } = Path.Combine(AppContext.BaseDirectory, "lib", "ffprobe.exe");
 }
 
-public class FfProbeServiceDocker : FfProbeService
-{
-    protected override string ExePath { get; } = "ffprobe";
-}
-
+/// <summary>Everything that is not Windows — Linux, Docker and macOS all resolve ffprobe from PATH.</summary>
 public class FfProbeServiceLinux : FfProbeService
 {
     protected override string ExePath { get; } = "ffprobe";

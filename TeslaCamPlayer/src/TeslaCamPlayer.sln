@@ -1,10 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
+# 
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TeslaCamPlayer.BlazorHosted.Server", "TeslaCamPlayer.BlazorHosted\Server\TeslaCamPlayer.BlazorHosted.Server.csproj", "{84F25F5F-0A2D-4183-9AA6-D2D31430B072}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TeslaCamPlayer.BlazorHosted.Client", "TeslaCamPlayer.BlazorHosted\Client\TeslaCamPlayer.BlazorHosted.Client.csproj", "{D049A554-B96A-454F-B6FA-377108AF9CA3}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TeslaCamPlayer.BlazorHosted.Shared", "TeslaCamPlayer.BlazorHosted\Shared\TeslaCamPlayer.BlazorHosted.Shared.csproj", "{9A3DB2F2-3B77-4EB3-B6FD-9BEF32391CE3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TeslaCamPlayer.Tests", "TeslaCamPlayer.Tests\TeslaCamPlayer.Tests.csproj", "{A284B7DC-36E2-41AD-9F37-8664E006B83A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -24,5 +27,9 @@ Global
 		{9A3DB2F2-3B77-4EB3-B6FD-9BEF32391CE3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9A3DB2F2-3B77-4EB3-B6FD-9BEF32391CE3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9A3DB2F2-3B77-4EB3-B6FD-9BEF32391CE3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A284B7DC-36E2-41AD-9F37-8664E006B83A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A284B7DC-36E2-41AD-9F37-8664E006B83A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A284B7DC-36E2-41AD-9F37-8664E006B83A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A284B7DC-36E2-41AD-9F37-8664E006B83A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

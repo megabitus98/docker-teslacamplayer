@@ -2,6 +2,7 @@
 // Telemetry is parsed server-side (/Api/SeiData/...) so the browser no longer
 // re-downloads the MP4; this module just fetches the JSON and indexes it by time.
 const parsedCache = new Map();
+const MAX_CACHED_SEGMENTS = 10;
 const DEFAULT_FRAME_DURATION_MS = 33.333; // ~30fps fallback
 
 function findFrameIndexForMs(startsMs, targetMs) {
@@ -53,6 +54,12 @@ export async function parseVideoSeiFromUrl(videoUrl) {
     }
 
     parsedCache.set(videoUrl, data);
+    // Each entry is the full parsed payload (~1MB for a 60s segment); scrubbing a long Sentry event
+    // would otherwise pin every segment it touched for the lifetime of the page. Map iterates in
+    // insertion order, so the first key is the oldest.
+    while (parsedCache.size > MAX_CACHED_SEGMENTS) {
+        parsedCache.delete(parsedCache.keys().next().value);
+    }
     return videoUrl;
 }
 

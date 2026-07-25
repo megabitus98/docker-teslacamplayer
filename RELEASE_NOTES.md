@@ -7,6 +7,76 @@ default template plus the auto-generated commit list.
 
 ---
 
+## v0.5.0
+
+Export several moments from one event into a single video, plus a defect
+sweep across the export pipeline, the timeline and the build.
+
+### Highlights
+
+- **Multi-interval export** — pick more than one range on the timeline and
+  get **one** file. Drag the markers to a range, press **Add interval** to
+  commit it, repeat. Committed ranges show as green bands on the timeline
+  and as deletable chips, and the duration readout is the sum of what will
+  actually be exported, not the span it covers. Intervals are joined with a
+  hard cut, sorted and merged if they overlap.
+- Each interval keeps **its own burned-in wall clock**, so the timestamp
+  jumps to the correct time at every join instead of counting straight
+  through the gaps. Telemetry HUD and GPS follow the same way.
+- A camera missing from one of the selected ranges no longer freezes its
+  tile on the last frame for the rest of the export — the gap is filled
+  with black of exactly the right length so all tiles stay in sync.
+
+### Fixes
+
+- Exports could silently lose up to a second off the end. The HUD overlay
+  determines output length, and with non-whole-frame ranges it came out
+  fractionally shorter than the video, so ffmpeg trimmed the video and
+  still reported success.
+- Telemetry HUD could show the wrong speed and GPS for the remainder of an
+  export: if a segment failed to parse mid-selection, every later reading
+  was placed early by that segment's duration. The output clock now cannot
+  be skipped.
+- Timeline markers no longer stick to the cursor. Releasing the mouse
+  outside the timeline left the marker dragging, so the next hover — with
+  no button held — moved it.
+- The timeline slider now seeks when driven by the keyboard. Arrow/Home/
+  End moved the thumb without moving the video, which then snapped back.
+- Parsed telemetry is capped at 10 cached segments in the browser. Scrubbing
+  a long Sentry event previously pinned every segment it touched (~1 MB
+  each) for the lifetime of the page.
+- Local and non-Windows builds no longer compile with the Windows platform
+  define. On macOS this selected a Windows `ffprobe.exe` that cannot run, so
+  a clip the native MP4 parser could not read was dropped from the index
+  instead of falling back. `linux-arm` / `linux-musl-arm` publishes were
+  affected the same way.
+
+### Internal
+
+- Interval and frame-grid arithmetic extracted to `ExportInterval` /
+  `ExportTiming` and covered by the repo's first unit tests (27).
+- Dead code removed (`ExtractSeiMessagesForTimeRange`, an unread timeline
+  field) and the ffprobe registration collapsed to a single Windows /
+  non-Windows branch.
+- The protobuf C# for the telemetry schema is now generated from
+  `SeiMetadata.proto` at build time instead of being checked in, so editing
+  the schema can no longer leave the generated code silently stale. The
+  generated output is byte-identical to the file it replaced.
+- The camera filter is compared by value rather than field by field, and
+  the audit artifacts from the architecture sweep were removed now that
+  every item in them has landed.
+- Container images are built on every pull request. Previously the images
+  were only ever built during a release, so a build break could not surface
+  until after the tag existed — which is exactly how an arm64-only failure
+  slipped through: it left macOS, the unit tests and the amd64 image all
+  green.
+
+### Compatibility
+
+No migration required. The export API keeps the existing
+`startTimeUtc`/`endTimeUtc` fields — a request without the new `intervals`
+list behaves exactly as before — so older clients keep working.
+
 ## v0.4.0
 
 Server-side SEI telemetry and a wave of long-standing bug fixes from the

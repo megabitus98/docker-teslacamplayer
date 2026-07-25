@@ -1,0 +1,55 @@
+name: CI
+
+# Build both container images on every PR and on pushes to the long-lived
+# branches. release.yml only fires on a `v*` tag AND pushes as it builds, so
+# without this an arch-specific build failure first shows up mid-release,
+# after the tag already exists.
+#
+# Both arches are built here for a reason: a toolchain that ships per-arch
+# native binaries can break exactly one of them. The arm64 leg is emulated
+# via QEMU and is the slow one - if that ever becomes painful, narrowing it
+# to `target: dotnet-builder` still covers the compile/codegen stage where
+# those failures happen, at the cost of not assembling the runtime layers.
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+# A newer push supersedes an in-flight run for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    name: Docker build (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            dockerfile: Dockerfile
+          - arch: arm64
+            platform: linux/arm64
+            dockerfile: Dockerfile.aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      # No registry login and no push: this job only answers "does it build".
+      # Cache scope is kept separate from release.yml's so a CI run can never
+      # poison the cache a real release builds from.
+      - name: Build ${{ matrix.arch }} image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=ci-${{ matrix.arch }}
+          cache-to: type=gha,scope=ci-${{ matrix.arch }},mode=max

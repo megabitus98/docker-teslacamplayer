@@ -17,7 +17,6 @@ public partial class ClipViewer
     private bool _isPlaying;
     private ClipVideoSegment _currentSegment;
     private double _timelineMaxSeconds;
-    private double _ignoreTimelineValue;
     private bool _wasPlayingBeforeScrub;
     private bool _isScrubbing;
     private double _timelineValue;
@@ -31,6 +30,8 @@ public partial class ClipViewer
     private ElementReference _gridElement;
     private DotNetObjectReference<ClipViewer> _objRef;
     private (double Start, double End) _exportRange;
+    // Committed export intervals, seconds from _clip.StartDate — same basis as _exportRange.
+    private readonly List<(double Start, double End)> _exportIntervals = new();
     private enum DragMarker { None, Start, End }
     private DragMarker _draggingMarker = DragMarker.None;
     private ElementReference _sliderContainerRef;

@@ -9,6 +9,10 @@ public class ExportRequest
     public DateTime StartTimeUtc { get; set; }
     public DateTime EndTimeUtc { get; set; }
 
+    // Multiple ranges of the same clip, concatenated into one output in time order.
+    // Null/empty => the single StartTimeUtc..EndTimeUtc range above.
+    public List<ExportInterval> Intervals { get; set; }
+
     // Cameras to include, in the exact on-screen order (row-major)
     public List<Cameras> OrderedCameras { get; set; } = new();
     public int GridColumns { get; set; }

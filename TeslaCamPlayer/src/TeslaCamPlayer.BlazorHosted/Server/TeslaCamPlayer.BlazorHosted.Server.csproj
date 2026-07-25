@@ -8,16 +8,17 @@
         <RuntimeIdentifiers>win-x64;win-x86;linux-x64;linux-musl-x64;linux-arm;linux-musl-arm;linux-arm64;linux-musl-arm64</RuntimeIdentifiers>
     </PropertyGroup>
 
-    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-        <DefineConstants>TRACE;WINDOWS</DefineConstants>
-    </PropertyGroup>
-
-    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-        <DefineConstants>TRACE;WINDOWS</DefineConstants>
-    </PropertyGroup>
-
-    <PropertyGroup Condition=" '$(Configuration)' == 'Release' And ('$(RuntimeIdentifier)' == 'linux-x64' Or '$(RuntimeIdentifier)' == 'linux-arm64' Or '$(RuntimeIdentifier)' == 'linux-musl-x64' Or '$(RuntimeIdentifier)' == 'linux-musl-arm64') ">
-        <DefineConstants>TRACE;LINUX</DefineConstants>
+    <!--
+        WINDOWS only for Windows targets; everything else (Linux incl. 32-bit ARM, macOS, and a plain
+        `dotnet run` on a non-Windows box) takes the LINUX path, which resolves ffprobe from PATH.
+        Keyed off the target rather than an RID whitelist so a new RID can't silently fall through to
+        WINDOWS. The Dockerfiles pass /p:DefineConstants=DOCKER, which overrides this.
+    -->
+    <PropertyGroup>
+        <IsWindowsTarget Condition=" '$(RuntimeIdentifier)' == '' ">$([MSBuild]::IsOSPlatform('Windows'))</IsWindowsTarget>
+        <IsWindowsTarget Condition=" '$(RuntimeIdentifier)' != '' ">$(RuntimeIdentifier.StartsWith('win'))</IsWindowsTarget>
+        <DefineConstants Condition=" '$(IsWindowsTarget)' == 'true' ">TRACE;WINDOWS</DefineConstants>
+        <DefineConstants Condition=" '$(IsWindowsTarget)' != 'true' ">TRACE;LINUX</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
@@ -30,8 +31,25 @@
             <PackageReference Include="Serilog" Version="3.1.1" />
             <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
             <PackageReference Include="Google.Protobuf" Version="3.33.1" />
+            <!--
+                Ships protoc; build-time only, never flows to the published output.
+                Do NOT downgrade: the linux_arm64 protoc segfaults on the response file MSBuild feeds it
+                in every version through 33.5 (Grpc.Tools 2.81.1), which breaks the arm64 image build while
+                leaving macOS builds green. 35.1 is the first that handles it. Generated output is
+                byte-identical across 31.1/33.5/35.1, so this stays compatible with Google.Protobuf 3.33.1.
+            -->
+            <PackageReference Include="Grpc.Tools" Version="2.83.0" PrivateAssets="all" />
         </ItemGroup>
-    
+
+    <!--
+        SeiMetadata.proto is the single source: protoc regenerates the C# into obj/ on every build, so
+        there is no checked-in copy to drift out of sync. The .proto declares no package and no
+        csharp_namespace, so the generated SeiMetadata lands in the global namespace the consumers expect.
+    -->
+    <ItemGroup>
+        <Protobuf Include="Models\SeiMetadata.proto" GrpcServices="None" />
+    </ItemGroup>
+
     <ItemGroup>
         <ProjectReference Include="..\Client\TeslaCamPlayer.BlazorHosted.Client.csproj" />
         <ProjectReference Include="..\Shared\TeslaCamPlayer.BlazorHosted.Shared.csproj" />

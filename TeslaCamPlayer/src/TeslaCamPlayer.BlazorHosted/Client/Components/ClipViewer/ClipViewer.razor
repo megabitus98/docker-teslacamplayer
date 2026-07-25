@@ -42,7 +42,7 @@
     <div class="controls">
         @if (IsExportMode)
         {
-            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">Export Mode Active — select a time range below</MudAlert>
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">Export Mode Active — drag the markers to select a range, then "Add interval" to keep several in one export</MudAlert>
         }
         <div class="play-pause">
             <MudIconButton Icon="@Icons.Material.Filled.SkipPrevious" Size="Size.Large" OnClick="@PreviousButtonClicked" />
@@ -103,10 +103,36 @@
                         <strong>Export End:</strong> @ExportEndDisplay()
                     </MudText>
                 </div>
-                <MudText Typo="Typo.caption" Class="timeline-label">
-                    <strong>Duration:</strong> @ExportDurationDisplay()
-                </MudText>
+                <div class="d-flex align-center" style="gap:12px;">
+                    <MudText Typo="Typo.caption" Class="timeline-label">
+                        <strong>Duration:</strong> @ExportDurationDisplay()
+                    </MudText>
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Outlined"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="@AddCurrentInterval">
+                        Add interval
+                    </MudButton>
+                </div>
             </div>
+
+            @if (_exportIntervals.Count > 0)
+            {
+                <div class="export-interval-chips d-flex align-center flex-wrap mb-1" style="gap:6px; width: 100%; max-width: 1100px;">
+                    <MudText Typo="Typo.caption" Class="timeline-label"><strong>Exporting:</strong></MudText>
+                    @for (var i = 0; i < _exportIntervals.Count; i++)
+                    {
+                        var index = i;
+                        <MudChip Size="Size.Small"
+                                 Color="Color.Success"
+                                 Variant="Variant.Filled"
+                                 OnClose="@(() => RemoveInterval(index))">
+                            @($"{index + 1}. {IntervalLabel(_exportIntervals[index])}")
+                        </MudChip>
+                    }
+                </div>
+            }
         }
         <div class="seeker-slider-container @(IsExportMode ? "export-mode" : "")">
             <div class="current-time-container">@(_clip?.StartDate.ToString("hh:mm:ss tt"))</div>
@@ -117,6 +143,10 @@
                  @onpointercancel="@OnSliderContainerPointerUp">
                 @if (IsExportMode)
                 {
+                    @for (var i = 0; i < _exportIntervals.Count; i++)
+                    {
+                        <div class="export-range-highlight committed" style="@BandStyle(_exportIntervals[i].Start, _exportIntervals[i].End)"></div>
+                    }
                     <div class="export-range-highlight" style="@ExportRangeHighlightStyle()"></div>
                     <div class="export-range-marker export-start-marker"
                          style="@ExportStartMarkerStyle()"
@@ -140,7 +170,8 @@
                            @bind-Value="@TimelineValue"
                            Variant="Variant.Filled"
                            @onpointerdown="@TimelineSliderPointerDown"
-                           @onpointerup="@TimelineSliderPointerUp" />
+                           @onpointerup="@TimelineSliderPointerUp"
+                           @onkeyup="@TimelineSliderKeyUp" />
                 <div class="event-marker" style="@EventMarkerStyle()"></div>
                 @foreach (var segment in _clip?.Segments ?? Array.Empty<ClipVideoSegment>())
                 {

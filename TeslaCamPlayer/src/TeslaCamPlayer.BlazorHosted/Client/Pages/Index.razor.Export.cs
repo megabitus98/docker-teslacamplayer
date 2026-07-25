@@ -127,8 +127,10 @@ public partial class Index
     {
         if (_activeClip == null) return;
 
-        var (startUtc, endUtc) = _clipViewer.GetSelectedInterval();
-        if (endUtc <= startUtc)
+        var intervals = _clipViewer.GetSelectedIntervals()
+            .Where(i => i.EndUtc > i.StartUtc)
+            .ToList();
+        if (intervals.Count == 0)
             return;
 
         var (cams, cols) = _clipViewer.GetVisibleCamerasAndColumns();
@@ -143,8 +145,12 @@ public partial class Index
         var request = new ExportRequest
         {
             ClipDirectoryPath = clipPath,
-            StartTimeUtc = startUtc,
-            EndTimeUtc = endUtc,
+            // First/last kept for the single-range wire contract; Intervals is what actually drives it.
+            StartTimeUtc = intervals[0].StartUtc,
+            EndTimeUtc = intervals[^1].EndUtc,
+            Intervals = intervals
+                .Select(i => new ExportInterval { StartTimeUtc = i.StartUtc, EndTimeUtc = i.EndUtc })
+                .ToList(),
             OrderedCameras = cams.ToList(),
             GridColumns = cols,
             Format = _exportFormat,
