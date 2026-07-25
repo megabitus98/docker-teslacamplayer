@@ -390,11 +390,10 @@ public class ExportService : IExportService
             // per tile: the canvas bottom corners belong to the location and timestamp overlays.
             var labelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8:x=12:y=12";
             // Trigger camera: the chip's box extends left (per-side boxborderw, ffmpeg >= 6.1) and an
-            // amber marker is drawn inside it — the export twin of the UI's amber dot. drawbox, not a
+            // amber dot is drawn inside it — the export twin of the UI's amber dot. drawbox, not a
             // '●' glyph: ffmpeg 6.1's drawtext drops trailing glyphs when the text contains
             // multi-byte UTF-8 (and strips leading spaces).
             var triggerLabelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8|8|8|30:x=42:y=12";
-            const string triggerMarker = ",drawbox=x=18:y=17:w=11:h=11:color=0xFF9800@1:t=fill";
             var triggerCam = clip.Event.TriggerTileCamera();
 
             // Each chunk is normalised to the cell size before concat, so a black filler splices in
@@ -408,11 +407,12 @@ public class ExportService : IExportService
 
                 // Drawn between scale and pad so the chip sits inside the footage, not on the
                 // letterbox bars — the export twin of the UI's inside-the-frame labels.
-                var baseLabel = EscapeDrawText(CameraLabel(cam));
+                var rawLabel = CameraLabel(cam);
+                var baseLabel = EscapeDrawText(rawLabel);
                 var labelDraw = !request.IncludeCameraLabels
                     ? ""
                     : cam == triggerCam
-                        ? $",drawtext=text='{baseLabel}'{triggerLabelFont}{triggerMarker}"
+                        ? $",drawtext=text='{baseLabel}'{triggerLabelFont}{TriggerMarker(rawLabel)}"
                         : $",drawtext=text='{baseLabel}'{labelFont}";
 
                 for (int i = 0; i < parts.Count; i++)
@@ -1112,6 +1112,19 @@ public class ExportService : IExportService
             Cameras.RightBPillar => "Right Pillar",
             _ => cam.ToString()
         };
+
+    // The trigger chip's round amber dot: the exact raster of a diameter-11 circle as stacked
+    // drawboxes (row widths 5,7,9,11 mirrored), since no ffmpeg filter draws circles cheaply.
+    // The chip is 31px tall but descenders (the 'p' in Repeater) stretch drawtext's box to
+    // 35px, so the vertically-centered dot y shifts with the label text.
+    private static string TriggerMarker(string label)
+    {
+        var y = label.IndexOfAny(['g', 'j', 'p', 'q', 'y']) >= 0 ? 16 : 14;
+        return $",drawbox=x=21:y={y}:w=5:h=11:color=0xFF9800@1:t=fill" +
+               $",drawbox=x=20:y={y + 1}:w=7:h=9:color=0xFF9800@1:t=fill" +
+               $",drawbox=x=19:y={y + 2}:w=9:h=7:color=0xFF9800@1:t=fill" +
+               $",drawbox=x=18:y={y + 3}:w=11:h=5:color=0xFF9800@1:t=fill";
+    }
 
     private static string EscapeDrawText(string text)
         => text.Replace("\\", "\\\\").Replace(":", "\\:").Replace("'", "\\'");

@@ -71,7 +71,7 @@ Creates `dist/TeslaCamPlayer-Windows-x64.zip` containing:
 - Setup and run scripts
 - Sample configuration
 
-**Requirements:** FFmpeg, Python 3.8+, and Pillow library (see `README.txt` in the ZIP for details)
+**Requirements:** FFmpeg 6.1+, Python 3.8+, and Pillow library (see `README.txt` in the ZIP for details)
 
 ### Linux Portable Build
 
@@ -86,7 +86,7 @@ Creates `dist/TeslaCamPlayer-Linux-x64.tar.gz` containing:
 - Setup and run scripts
 - Sample configuration
 
-**Requirements:** ffmpeg, python3, and Pillow library (see `README.md` in the archive for details)
+**Requirements:** ffmpeg 6.1+, python3, and Pillow library (see `README.md` in the archive for details)
 
 ### Docker Build (Existing)
 
