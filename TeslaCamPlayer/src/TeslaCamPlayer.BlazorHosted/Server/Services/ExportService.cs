@@ -513,6 +513,16 @@ public class ExportService : IExportService
                       .Append('[').Append(finalLabel).Append(']')
                       .Append("setpts=PTS-STARTPTS");
 
+                var fmtSettings = _settingsProvider.Settings;
+                // Colons inside the strftime pattern pass two parsers: the filtergraph option
+                // parser (\: -> :) and then the %{...} expansion parser, which splits args on
+                // bare ':'. So each format colon must arrive at the expansion layer as '\:',
+                // which means emitting '\\\:' here. Verified against ffmpeg: '\:' or '\\:' both
+                // break ("%{pts} requires at most 3 arguments" / graph parse error).
+                var strftimePattern =
+                    $"{TimeFormats.StrftimeDate(fmtSettings.DateFormat)} {TimeFormats.StrftimeTime(fmtSettings.TimeFormat)}"
+                        .Replace(":", @"\\\:");
+
                 var offsetSeconds = 0d;
                 for (var i = 0; i < intervals.Count; i++)
                 {
@@ -522,7 +532,7 @@ public class ExportService : IExportService
                     // Overshoot the last span so a final frame landing exactly on the boundary still draws.
                     var enableEnd = i == intervals.Count - 1 ? spanEnd + 1 : spanEnd;
                     filter.Append(',')
-                          .Append($@"drawtext=text='%{{pts\:localtime\:{FormatTimeArg(epoch)}\:%Y-%m-%d %X}}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4:x=w-tw-10:y=h-th-10")
+                          .Append($@"drawtext=text='%{{pts\:localtime\:{FormatTimeArg(epoch)}\:{strftimePattern}}}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4:x=w-tw-10:y=h-th-10")
                           .Append($":enable='gte(t,{FormatTimeArg(offsetSeconds)})*lt(t,{FormatTimeArg(enableEnd)})'");
                     offsetSeconds = spanEnd;
                 }
