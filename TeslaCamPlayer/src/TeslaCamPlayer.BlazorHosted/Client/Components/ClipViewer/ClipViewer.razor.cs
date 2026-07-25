@@ -60,25 +60,13 @@ public partial class ClipViewer : ComponentBase, IDisposable
             return;
         }
 
-        if (_lastAppliedCameraFilter.ShowFront == CameraFilter.ShowFront &&
-            _lastAppliedCameraFilter.ShowBack == CameraFilter.ShowBack &&
-            _lastAppliedCameraFilter.ShowLeftRepeater == CameraFilter.ShowLeftRepeater &&
-            _lastAppliedCameraFilter.ShowLeftPillar == CameraFilter.ShowLeftPillar &&
-            _lastAppliedCameraFilter.ShowRightRepeater == CameraFilter.ShowRightRepeater &&
-            _lastAppliedCameraFilter.ShowRightPillar == CameraFilter.ShowRightPillar)
+        if (_lastAppliedCameraFilter == CameraFilter)
         {
             return;
         }
 
-        _lastAppliedCameraFilter = new CameraFilterValues
-        {
-            ShowFront = CameraFilter.ShowFront,
-            ShowBack = CameraFilter.ShowBack,
-            ShowLeftRepeater = CameraFilter.ShowLeftRepeater,
-            ShowLeftPillar = CameraFilter.ShowLeftPillar,
-            ShowRightRepeater = CameraFilter.ShowRightRepeater,
-            ShowRightPillar = CameraFilter.ShowRightPillar
-        };
+        // `with { }` copies: CameraFilter is mutated in place, so aliasing it would freeze the check.
+        _lastAppliedCameraFilter = CameraFilter with { };
 
         await InvokeAsync(StateHasChanged);
     }

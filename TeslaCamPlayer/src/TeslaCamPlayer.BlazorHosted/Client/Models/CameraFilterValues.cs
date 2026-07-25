@@ -2,7 +2,9 @@ using TeslaCamPlayer.BlazorHosted.Shared.Models;
 
 namespace TeslaCamPlayer.BlazorHosted.Client.Models
 {
-    public class CameraFilterValues
+    // record, not class: ClipViewer dirty-checks the filter by value against a `with { }` snapshot.
+    // Properties stay settable because CameraFilter.razor mutates this instance in place.
+    public record CameraFilterValues
     {
         public bool ShowFront { get; set; } = true;
         public bool ShowBack { get; set; } = true;

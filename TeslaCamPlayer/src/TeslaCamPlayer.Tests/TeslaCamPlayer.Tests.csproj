@@ -14,6 +14,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\TeslaCamPlayer.BlazorHosted\Shared\TeslaCamPlayer.BlazorHosted.Shared.csproj" />
+        <!-- ponytail: link the one POCO instead of referencing the whole Blazor WASM Client project. -->
+        <Compile Include="..\TeslaCamPlayer.BlazorHosted\Client\Models\CameraFilterValues.cs" Link="CameraFilterValues.cs" />
     </ItemGroup>
 
 </Project>
