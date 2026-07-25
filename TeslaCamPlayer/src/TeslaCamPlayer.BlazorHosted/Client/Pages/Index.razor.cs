@@ -51,7 +51,6 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private string _dateFormat = TimeFormats.DefaultDateFormat;
     private int _uiBlurPx = 8;
     private UpdateCheckResult _updateCheck;
-    private bool _updateDismissed;
     private AppSettingsResponse _appSettings;
     private bool _pendingSetupDialog;
 
@@ -112,8 +111,6 @@ public partial class Index : ComponentBase, IAsyncDisposable
             _updateCheck = await HttpClient.GetFromNewtonsoftJsonAsync<UpdateCheckResult>("Api/UpdateCheck");
             if (_updateCheck?.UpdateAvailable == true)
             {
-                var dismissed = await JsRuntime.InvokeAsync<string>("localStorage.getItem", "tcp-dismissed-update");
-                _updateDismissed = dismissed == _updateCheck.Latest;
                 StateHasChanged();
             }
         }
@@ -121,12 +118,6 @@ public partial class Index : ComponentBase, IAsyncDisposable
         {
             // Update info is best-effort; never block the app on it.
         }
-    }
-
-    private async Task DismissUpdateAsync()
-    {
-        _updateDismissed = true;
-        await JsRuntime.InvokeVoidAsync("localStorage.setItem", "tcp-dismissed-update", _updateCheck.Latest);
     }
 
     private async Task LoadAppSettingsAsync()
