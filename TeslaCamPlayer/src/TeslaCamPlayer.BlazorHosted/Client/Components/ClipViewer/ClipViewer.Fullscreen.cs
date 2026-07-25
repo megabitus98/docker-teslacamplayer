@@ -11,12 +11,14 @@ public partial class ClipViewer
 
     private string GetTileCss(Tile tile)
     {
+        var trigger = tile == _triggerTile ? "tile-trigger" : null;
         if (_fullscreenTile != tile)
         {
-            return null;
+            return trigger;
         }
 
-        return _isFullscreenPending ? "is-fullscreen is-transition-pending" : "is-fullscreen";
+        var fullscreen = _isFullscreenPending ? "is-fullscreen is-transition-pending" : "is-fullscreen";
+        return trigger == null ? fullscreen : $"{fullscreen} {trigger}";
     }
 
     private async Task ToggleFullscreen(Tile tile)

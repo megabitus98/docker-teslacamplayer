@@ -99,6 +99,11 @@
         outline-offset: -2px;
     }
 
+    .grid-tile.tile-trigger {
+        outline: 2px solid var(--mud-palette-warning);
+        outline-offset: -2px;
+    }
+
     /* Fullscreen behavior */
     .video-grid.fullscreen-active .grid-tile {
         opacity: 0;
@@ -178,6 +183,19 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        display: inline-block;
+    }
+
+    .tile-label__trigger {
+        margin-left: 6px;
+        padding: 3px 8px;
+        border-radius: 8px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: var(--mud-palette-warning);
+        color: #000;
         display: inline-block;
     }
 

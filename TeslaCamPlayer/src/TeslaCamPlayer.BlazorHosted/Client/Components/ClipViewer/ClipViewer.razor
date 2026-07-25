@@ -20,7 +20,13 @@
                     <VideoPlayer @key="@tile.VideoKey" @ref="tile.Player" Class="grid-video" VideoEnded="VideoEnded" TimeUpdate="ActiveVideoTimeUpdate" />
                     @if (IsTileVisible(tile.Tile))
                     {
-                        <div class="tile-label"><span class="tile-label__text">@tile.Label</span></div>
+                        <div class="tile-label">
+                            <span class="tile-label__text">@tile.Label</span>
+                            @if (tile.Tile == _triggerTile)
+                            {
+                                <span class="tile-label__trigger">Triggered</span>
+                            }
+                        </div>
                     }
                 </div>
             }

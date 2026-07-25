@@ -23,6 +23,21 @@ public static class EventExtensions
         return null;
     }
 
+    /// <summary>
+    /// The camera tile that triggered this event: Fisheye/Narrow fold into Front,
+    /// Cabin/Unknown have no tile. Null when there is no event.
+    /// </summary>
+    public static Cameras? TriggerTileCamera(this Event evt) => evt?.Camera switch
+    {
+        Cameras.Front or Cameras.Fisheye or Cameras.Narrow => Cameras.Front,
+        Cameras.Back => Cameras.Back,
+        Cameras.LeftRepeater => Cameras.LeftRepeater,
+        Cameras.RightRepeater => Cameras.RightRepeater,
+        Cameras.LeftBPillar => Cameras.LeftBPillar,
+        Cameras.RightBPillar => Cameras.RightBPillar,
+        _ => null
+    };
+
     public static string GetLocationDescription(this Event evt)
     {
         if (evt == null) return null;

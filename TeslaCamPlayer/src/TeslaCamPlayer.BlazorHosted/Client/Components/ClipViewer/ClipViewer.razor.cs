@@ -71,9 +71,21 @@ public partial class ClipViewer : ComponentBase, IDisposable
         await InvokeAsync(StateHasChanged);
     }
 
+    private Tile? _triggerTile;
+
     public async Task SetClipAsync(Clip clip)
     {
         _clip = clip;
+        _triggerTile = clip?.Event.TriggerTileCamera() switch
+        {
+            Cameras.Front => Tile.Front,
+            Cameras.Back => Tile.Back,
+            Cameras.LeftRepeater => Tile.LeftRepeater,
+            Cameras.RightRepeater => Tile.RightRepeater,
+            Cameras.LeftBPillar => Tile.LeftPillar,
+            Cameras.RightBPillar => Tile.RightPillar,
+            _ => null
+        };
         await EnsurePlayersReadyAsync();
         TimelineValue = 0;
         _timelineMaxSeconds = (clip.EndDate - clip.StartDate).TotalSeconds;
