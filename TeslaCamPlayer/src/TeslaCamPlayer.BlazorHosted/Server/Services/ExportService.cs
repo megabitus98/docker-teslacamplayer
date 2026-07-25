@@ -389,11 +389,12 @@ public class ExportService : IExportService
             // Chip look mirroring the UI tile labels (dark pill, white text). Labels sit top-left
             // per tile: the canvas bottom corners belong to the location and timestamp overlays.
             var labelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8:x=12:y=12";
-            // Trigger camera: chip shifts right and an amber marker sits beside it — the export twin
-            // of the UI's amber dot. drawbox, not a '●' glyph: ffmpeg 6.1's drawtext drops trailing
-            // glyphs when the text contains multi-byte UTF-8 (and strips leading spaces).
-            var triggerLabelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8:x=34:y=12";
-            const string triggerMarker = ",drawbox=x=12:y=17:w=10:h=10:color=0xFF9800@1:t=fill";
+            // Trigger camera: the chip's box extends left (per-side boxborderw, ffmpeg >= 6.1) and an
+            // amber marker is drawn inside it — the export twin of the UI's amber dot. drawbox, not a
+            // '●' glyph: ffmpeg 6.1's drawtext drops trailing glyphs when the text contains
+            // multi-byte UTF-8 (and strips leading spaces).
+            var triggerLabelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.55:boxborderw=8|8|8|30:x=42:y=12";
+            const string triggerMarker = ",drawbox=x=18:y=17:w=11:h=11:color=0xFF9800@1:t=fill";
             var triggerCam = clip.Event.TriggerTileCamera();
 
             // Each chunk is normalised to the cell size before concat, so a black filler splices in
