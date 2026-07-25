@@ -12,6 +12,11 @@ services:
       - SPEED_UNIT=kmh # Speed unit for SEI HUD telemetry (kmh or mph)
       - EXPORT_ROOT_PATH=/export
       - EXPORT_RETENTION_HOURS=0
+      - EXPORT_HWACCEL=auto # GPU export encode/decode when available (auto or off)
+      - TIME_FORMAT=12h # 12h or 24h clock in the UI and exported timestamps
+      - DATE_FORMAT=dd MMM yy # dd MMM yy, yyyy-MM-dd, MM/dd/yyyy or dd/MM/yyyy
+      - UI_BLUR_PX=8 # Frosted-glass blur radius for the app chrome (0 disables)
+      - UPDATE_CHECK=true # Check GitHub for a newer release (max once per day)
       # Decrypt encrypted TeslaCam clips (firmware 2026.20+). Obtain a refresh token once with the
       # tesla-dashcam-decrypt tool and put it in a local .env (see .env.example). Optional.
       - TESLA_REFRESH_TOKEN=${TESLA_REFRESH_TOKEN:-}
