@@ -639,6 +639,15 @@ public class SettingsProvider : ISettingsProvider
                 (settings, value) => settings.EnableDelete = bool.Parse(value),
                 ParseBool),
             new AppSettingDefinition(
+                nameof(Settings.UpdateCheck),
+                "Check for updates",
+                "Ask GitHub for the latest release at most once per day and show a notification when a newer version exists.",
+                "boolean",
+                new[] { "UPDATE_CHECK", "UpdateCheck" },
+                settings => settings.UpdateCheck ? "true" : "false",
+                (settings, value) => settings.UpdateCheck = bool.Parse(value),
+                ParseBool),
+            new AppSettingDefinition(
                 nameof(Settings.SpeedUnit),
                 "Speed unit",
                 "Speed display unit for telemetry overlays.",

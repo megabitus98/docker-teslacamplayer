@@ -21,6 +21,9 @@ public class Settings
 
     /// <summary>"auto" probes for a hardware H.264 encoder and uses -hwaccel auto decode; "off" is pure software (pre-hwaccel behavior).</summary>
     public string ExportHwaccel { get; set; } = "auto";
+
+    /// <summary>Check GitHub for a newer release (max once per 24h). false = no outbound call at all.</summary>
+    public bool UpdateCheck { get; set; } = true;
     public string ExportRootPath { get; set; }
     public int ExportRetentionHours { get; set; } = 24;
     public int IndexingBatchSize { get; set; } = 1000;
