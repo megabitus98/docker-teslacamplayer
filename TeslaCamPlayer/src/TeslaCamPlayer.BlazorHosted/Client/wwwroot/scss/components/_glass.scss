@@ -1,0 +1,22 @@
+// Frosted-glass chrome. Only active when the server-configured blur is > 0 —
+// the .tcp-glass class and --tcp-glass-blur are emitted together by Index.razor,
+// so an off setting costs zero compositing layers.
+.mud-layout.tcp-glass {
+    .mud-appbar {
+        background-color: color-mix(in srgb, var(--mud-palette-appbar-background) 65%, transparent);
+        backdrop-filter: blur(var(--tcp-glass-blur, 8px));
+        -webkit-backdrop-filter: blur(var(--tcp-glass-blur, 8px));
+    }
+
+    .mud-drawer {
+        background-color: color-mix(in srgb, var(--mud-palette-drawer-background) 65%, transparent);
+        backdrop-filter: blur(var(--tcp-glass-blur, 8px));
+        -webkit-backdrop-filter: blur(var(--tcp-glass-blur, 8px));
+    }
+
+    .viewer .controls {
+        background-color: color-mix(in srgb, var(--mud-palette-surface) 65%, transparent);
+        backdrop-filter: blur(var(--tcp-glass-blur, 8px));
+        -webkit-backdrop-filter: blur(var(--tcp-glass-blur, 8px));
+    }
+}

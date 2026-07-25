@@ -3,7 +3,11 @@
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
 
-<MudLayout>
+@if (_uiBlurPx > 0)
+{
+    <style>:root { --tcp-glass-blur: @(_uiBlurPx)px; }</style>
+}
+<MudLayout Class="@(_uiBlurPx > 0 ? "tcp-glass" : null)">
     <MudAppBar Elevation="1">
         <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@ToggleDrawer" />
         <MudSpacer />

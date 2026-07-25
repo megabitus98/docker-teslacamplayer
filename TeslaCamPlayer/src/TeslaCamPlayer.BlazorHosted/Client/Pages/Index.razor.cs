@@ -49,6 +49,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
     private string _speedUnit = "kmh";
     private string _timeFormat = TimeFormats.DefaultTimeFormat;
     private string _dateFormat = TimeFormats.DefaultDateFormat;
+    private int _uiBlurPx = 8;
     private AppSettingsResponse _appSettings;
     private bool _pendingSetupDialog;
 
@@ -88,6 +89,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
             _speedUnit = config?.SpeedUnit ?? "kmh";
             _timeFormat = config?.TimeFormat ?? TimeFormats.DefaultTimeFormat;
             _dateFormat = config?.DateFormat ?? TimeFormats.DefaultDateFormat;
+            _uiBlurPx = config?.UiBlurPx ?? 8;
         }
         catch
         {
@@ -96,6 +98,7 @@ public partial class Index : ComponentBase, IAsyncDisposable
             _speedUnit = "kmh";
             _timeFormat = TimeFormats.DefaultTimeFormat;
             _dateFormat = TimeFormats.DefaultDateFormat;
+            _uiBlurPx = 8;
         }
     }
 

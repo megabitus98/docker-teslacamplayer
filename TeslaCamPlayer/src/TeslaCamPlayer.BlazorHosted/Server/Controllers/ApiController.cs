@@ -103,7 +103,8 @@ public class ApiController : ControllerBase
             EnableDelete = settings.EnableDelete,
             SpeedUnit = settings.SpeedUnit,
             TimeFormat = settings.TimeFormat,
-            DateFormat = settings.DateFormat
+            DateFormat = settings.DateFormat,
+            UiBlurPx = settings.UiBlurPx
         };
     }
 

@@ -15,6 +15,9 @@ public class Settings
 
     /// <summary>One of TimeFormats.DateFormatOptions — drives date displays and the export burn-in.</summary>
     public string DateFormat { get; set; } = TimeFormats.DefaultDateFormat;
+
+    /// <summary>Glass-blur radius in px for the app chrome (app bar, drawer, control bar). 0 disables.</summary>
+    public int UiBlurPx { get; set; } = 8;
     public string ExportRootPath { get; set; }
     public int ExportRetentionHours { get; set; } = 24;
     public int IndexingBatchSize { get; set; } = 1000;

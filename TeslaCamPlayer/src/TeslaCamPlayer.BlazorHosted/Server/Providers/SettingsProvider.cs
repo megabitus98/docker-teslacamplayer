@@ -414,6 +414,7 @@ public class SettingsProvider : ISettingsProvider
         }
 
         settings.DateFormat = TimeFormats.DatePattern(settings.DateFormat);
+        settings.UiBlurPx = Math.Clamp(settings.UiBlurPx, 0, 24);
 
         if (string.IsNullOrWhiteSpace(settings.CacheDatabasePath))
         {
@@ -663,6 +664,15 @@ public class SettingsProvider : ISettingsProvider
                 value => ParseOneOf(value, TimeFormats.DateFormatOptions),
                 options: TimeFormats.DateFormatOptions),
             new AppSettingDefinition(
+                nameof(Settings.UiBlurPx),
+                "Glass blur (px)",
+                "Frosted-glass blur radius for the app bar, drawer and control bar. 0 disables.",
+                "integer",
+                new[] { "UI_BLUR_PX", "UiBlurPx" },
+                settings => settings.UiBlurPx.ToString(CultureInfo.InvariantCulture),
+                (settings, value) => settings.UiBlurPx = int.Parse(value, CultureInfo.InvariantCulture),
+                value => ParseInt(value, min: 0, max: 24)),
+            new AppSettingDefinition(
                 nameof(Settings.ExportRootPath),
                 "Export root path",
                 "Folder where exported videos are written.",
@@ -804,11 +814,13 @@ public class SettingsProvider : ISettingsProvider
         };
     }
 
-    private static ParseResult ParseInt(string? value, int min)
+    private static ParseResult ParseInt(string? value, int min, int? max = null)
     {
-        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) || result < min)
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) || result < min || (max.HasValue && result > max.Value))
         {
-            return ParseResult.Fail($"Use an integer greater than or equal to {min}.");
+            return ParseResult.Fail(max.HasValue
+                ? $"Use an integer between {min} and {max.Value}."
+                : $"Use an integer greater than or equal to {min}.");
         }
 
         return ParseResult.Ok(result.ToString(CultureInfo.InvariantCulture));

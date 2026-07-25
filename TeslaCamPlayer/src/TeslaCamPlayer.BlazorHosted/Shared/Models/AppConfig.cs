@@ -6,5 +6,6 @@ public class AppConfig
     public string SpeedUnit { get; set; }
     public string TimeFormat { get; set; }
     public string DateFormat { get; set; }
+    public int UiBlurPx { get; set; }
 }
 
