@@ -54,10 +54,22 @@ sweep across the export pipeline, the timeline and the build.
 ### Internal
 
 - Interval and frame-grid arithmetic extracted to `ExportInterval` /
-  `ExportTiming` and covered by the repo's first unit tests (26).
+  `ExportTiming` and covered by the repo's first unit tests (27).
 - Dead code removed (`ExtractSeiMessagesForTimeRange`, an unread timeline
   field) and the ffprobe registration collapsed to a single Windows /
   non-Windows branch.
+- The protobuf C# for the telemetry schema is now generated from
+  `SeiMetadata.proto` at build time instead of being checked in, so editing
+  the schema can no longer leave the generated code silently stale. The
+  generated output is byte-identical to the file it replaced.
+- The camera filter is compared by value rather than field by field, and
+  the audit artifacts from the architecture sweep were removed now that
+  every item in them has landed.
+- Container images are built on every pull request. Previously the images
+  were only ever built during a release, so a build break could not surface
+  until after the tag existed — which is exactly how an arm64-only failure
+  slipped through: it left macOS, the unit tests and the amd64 image all
+  green.
 
 ### Compatibility
 
