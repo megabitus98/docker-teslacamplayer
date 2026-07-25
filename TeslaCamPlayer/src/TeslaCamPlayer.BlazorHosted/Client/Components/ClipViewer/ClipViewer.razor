@@ -21,11 +21,13 @@
                     @if (IsTileVisible(tile.Tile))
                     {
                         <div class="tile-label">
-                            <span class="tile-label__text">@tile.Label</span>
-                            @if (tile.Tile == _triggerTile)
-                            {
-                                <span class="tile-label__trigger">Triggered</span>
-                            }
+                            <span class="tile-label__text">
+                                @if (tile.Tile == _triggerTile)
+                                {
+                                    <span class="tile-label__trigger-dot" aria-label="This camera triggered the event"></span>
+                                }
+                                @tile.Label
+                            </span>
                         </div>
                     }
                 </div>
