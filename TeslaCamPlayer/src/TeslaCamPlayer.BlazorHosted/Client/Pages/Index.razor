@@ -121,7 +121,7 @@
                         @if (context != null)
                         {
                             <div class="event @(_activeClip?.DirectoryPath == context.DirectoryPath ? "event--active" : null)" @key="@context.DirectoryPath"
-                                 style="height: 82px; box-sizing: border-box; overflow: hidden; margin: 0; padding: 5px;"
+                                 style="height: 88px; box-sizing: border-box; overflow: hidden; margin: 0; padding: 5px;"
                                  @onclick="@(() => SetActiveClip(context))">
                                 <div style="position: relative; width: 128px; height: 72px; flex: 0 0 auto;">
                                     <img class="thumbnail"
@@ -155,7 +155,7 @@
                         }
                     </ItemContent>
                     <Placeholder>
-                        <div class="event" style="height: 82px; box-sizing: border-box; overflow: hidden; margin: 0; padding: 5px;">
+                        <div class="event" style="height: 88px; box-sizing: border-box; overflow: hidden; margin: 0; padding: 5px;">
                             <MudSkeleton Class="thumbnail" Width="128px" Height="72px" />
                             <div class="details ml-2">
                                 <div class="icons">

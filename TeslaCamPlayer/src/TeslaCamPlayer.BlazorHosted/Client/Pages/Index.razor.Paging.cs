@@ -13,7 +13,8 @@ namespace TeslaCamPlayer.BlazorHosted.Client.Pages;
 
 public partial class Index
 {
-    private const int EventItemHeight = 82;
+    // 72px thumbnail + 5px padding x2 + 3px transparent border x2 (the hover-highlight gap)
+    private const int EventItemHeight = 88;
 
     private int _totalClipCount;
     private bool _isInitialLoading = true;
