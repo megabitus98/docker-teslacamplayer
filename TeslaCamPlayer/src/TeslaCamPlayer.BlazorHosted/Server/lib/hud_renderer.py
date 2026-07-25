@@ -25,7 +25,7 @@ CHIP_INNER_RADIUS = 10
 CHIP_GAP = 8
 CHIP_GAP_WIDE = 14
 SPEED_BLOCK_HALF_W = 60
-SPEED_BLOCK_HALF_H = 28
+SPEED_BLOCK_HALF_H = 25
 
 # Icon supersampling for higher quality (2x = better quality, 4x = best quality but slower)
 ICON_SUPERSAMPLE = 2
@@ -609,7 +609,9 @@ def create_hud_frame(width, height, telemetry, use_mph, state=None, enable_locat
 
     speed_x = hud_x + HUD_WIDTH // 2
     speed_y = hud_y + HUD_HEIGHT // 2
-    speed_box = draw_speed_block(draw, speed_x, speed_y - 2, speed, unit, font_large, font_small)
+    # Bottom flush with the chip row: the taller speed block takes its extra height upward,
+    # keeping clearance from the video content that starts just below the HUD strip.
+    speed_box = draw_speed_block(draw, speed_x, speed_y - 4, speed, unit, font_large, font_small)
 
     # symmetric spacing around the speed block
     LEFT_CHIPS = 3
