@@ -21,6 +21,7 @@ builder.Services.AddSingleton<IRefreshProgressService, RefreshProgressService>()
 builder.Services.AddSingleton<IClipIndexRepository, SqliteClipIndexRepository>();
 builder.Services.AddSingleton<IClipsService, ClipsService>();
 builder.Services.AddSingleton<IExportService, ExportService>();
+builder.Services.AddSingleton<IFfmpegCapabilities, FfmpegCapabilitiesService>();
 builder.Services.AddSingleton<ISeiParserService, SeiParserService>();
 builder.Services.AddTransient<IMp4TimingService, Mp4TimingService>();
 builder.Services.AddHostedService<ExportCleanupService>();
