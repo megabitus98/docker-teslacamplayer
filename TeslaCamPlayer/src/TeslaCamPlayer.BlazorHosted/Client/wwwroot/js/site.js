@@ -170,3 +170,40 @@ async function fetchVideoAsArrayBuffer(videoUrl) {
     const response = await fetch(videoUrl);
     return await response.arrayBuffer();
 }
+
+// Keep tile labels inside the letterboxed video frame: object-fit:contain leaves
+// bars around the video, so compute the rendered video rect per tile and expose
+// it as CSS insets the label overlay aligns to.
+window.clipViewer.observeVideoFraming = function (gridEl) {
+    if (!gridEl) {
+        return;
+    }
+
+    const update = () => {
+        for (const tile of gridEl.querySelectorAll(".grid-tile")) {
+            const video = tile.querySelector("video");
+            if (!video || !video.videoWidth || !video.videoHeight) {
+                continue;
+            }
+            const tw = tile.clientWidth;
+            const th = tile.clientHeight;
+            const scale = Math.min(tw / video.videoWidth, th / video.videoHeight);
+            const insetX = Math.max(0, (tw - video.videoWidth * scale) / 2);
+            const insetY = Math.max(0, (th - video.videoHeight * scale) / 2);
+            tile.style.setProperty("--video-inset-x", insetX.toFixed(1) + "px");
+            tile.style.setProperty("--video-inset-y", insetY.toFixed(1) + "px");
+        }
+    };
+
+    window.clipViewer._framingObserver?.disconnect?.();
+    const ro = new ResizeObserver(update);
+    ro.observe(gridEl);
+    for (const tile of gridEl.querySelectorAll(".grid-tile")) {
+        ro.observe(tile);
+    }
+    window.clipViewer._framingObserver = ro;
+
+    // loadedmetadata does not bubble; a capture listener on the grid still sees it
+    gridEl.addEventListener("loadedmetadata", update, true);
+    update();
+};

@@ -57,6 +57,10 @@ public partial class ClipViewer : ComponentBase, IDisposable
 
             tile.Player.Loaded += () => { _videoLoadedEventCount++; };
         }
+
+        // Keep tile labels inside the letterboxed video frame (self-updating via
+        // ResizeObserver + loadedmetadata after this one call).
+        try { JsRuntime?.InvokeVoidAsync("clipViewer.observeVideoFraming", _gridElement); } catch { }
     }
 
     protected override async Task OnParametersSetAsync()

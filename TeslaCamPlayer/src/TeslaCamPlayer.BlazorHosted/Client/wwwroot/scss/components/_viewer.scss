@@ -154,9 +154,11 @@
     }
 
     .tile-label {
-        /* Fill the tile as an invisible overlay so the label is always inside */
+        /* Overlay aligned to the rendered video frame, not the tile box:
+           object-fit:contain letterboxes the video, and observeVideoFraming
+           (site.js) publishes the bar sizes as --video-inset-x/y per tile. */
         position: absolute;
-        inset: 0;
+        inset: var(--video-inset-y, 0) var(--video-inset-x, 0);
         display: flex;
         align-items: flex-end;
         justify-content: flex-end;
