@@ -31,8 +31,14 @@
             <PackageReference Include="Serilog" Version="3.1.1" />
             <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
             <PackageReference Include="Google.Protobuf" Version="3.33.1" />
-            <!-- Ships protoc; build-time only, never flows to the published output. 2.81.1 bundles protoc 33.x, matching Google.Protobuf 3.33.1. -->
-            <PackageReference Include="Grpc.Tools" Version="2.81.1" PrivateAssets="all" />
+            <!--
+                Ships protoc; build-time only, never flows to the published output.
+                Do NOT downgrade: the linux_arm64 protoc segfaults on the response file MSBuild feeds it
+                in every version through 33.5 (Grpc.Tools 2.81.1), which breaks the arm64 image build while
+                leaving macOS builds green. 35.1 is the first that handles it. Generated output is
+                byte-identical across 31.1/33.5/35.1, so this stays compatible with Google.Protobuf 3.33.1.
+            -->
+            <PackageReference Include="Grpc.Tools" Version="2.83.0" PrivateAssets="all" />
         </ItemGroup>
 
     <!--
