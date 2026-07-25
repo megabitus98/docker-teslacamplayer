@@ -165,6 +165,13 @@
         padding: 12px;
         pointer-events: none;
         z-index: 2;
+        transition: opacity 120ms ease;
+    }
+
+    /* Hidden while the FLIP fullscreen animation scales the tile, else the text scales with it */
+    .grid-tile.is-flip-animating .tile-label {
+        opacity: 0;
+        transition: none;
     }
 
     .tile-label__text {

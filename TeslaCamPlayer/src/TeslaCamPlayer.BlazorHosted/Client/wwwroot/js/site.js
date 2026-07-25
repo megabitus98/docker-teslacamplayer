@@ -62,6 +62,8 @@ function playFlipAnimation(tileEl, fromRect, toRect, options) {
     tileEl.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`;
     tileEl.style.zIndex = '20';
     tileEl.style.pointerEvents = 'none';
+    // The scale transform would blow the label text up mid-flight; hide it and fade back at the end.
+    tileEl.classList.add('is-flip-animating');
 
     if (removePendingClass && tileEl.classList.contains('is-transition-pending')) {
         tileEl.classList.remove('is-transition-pending');
@@ -82,6 +84,7 @@ function playFlipAnimation(tileEl, fromRect, toRect, options) {
             tileEl.style.opacity = '';
             tileEl.style.visibility = '';
             tileEl.classList.remove('is-transition-pending');
+            tileEl.classList.remove('is-flip-animating');
             tileEl.removeEventListener('transitionend', onEnd);
             resolve(true);
         };
