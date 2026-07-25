@@ -38,22 +38,17 @@ builder.Services.AddSingleton<IClipDecryptionService, ClipDecryptionService>();
 builder.Services.AddHostedService<DecryptedCacheCleanupService>();
 
 builder.Services.AddSignalR();
+// HudRendererService picks its python and script paths itself (including a runtime OS check), so it
+// registers the same way everywhere. Only ffprobe differs, and only Windows-vs-not: the Docker and
+// Linux implementations are the same bare "ffprobe" on PATH.
+builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
 #if WINDOWS
-builder.Services.AddSingleton<FfProbeServiceWindows>();
-builder.Services.AddTransient<IFfProbeService>(sp =>
-    new HybridDurationProbeService(sp.GetRequiredService<FfProbeServiceWindows>()));
-builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
-#elif DOCKER
-builder.Services.AddSingleton<FfProbeServiceDocker>();
-builder.Services.AddTransient<IFfProbeService>(sp =>
-    new HybridDurationProbeService(sp.GetRequiredService<FfProbeServiceDocker>()));
-builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
-#elif LINUX
-builder.Services.AddSingleton<FfProbeServiceLinux>();
-builder.Services.AddTransient<IFfProbeService>(sp =>
-    new HybridDurationProbeService(sp.GetRequiredService<FfProbeServiceLinux>()));
-builder.Services.AddSingleton<IHudRendererService, HudRendererService>();
+builder.Services.AddSingleton<FfProbeService, FfProbeServiceWindows>();
+#else
+builder.Services.AddSingleton<FfProbeService, FfProbeServiceLinux>();
 #endif
+builder.Services.AddTransient<IFfProbeService>(sp =>
+    new HybridDurationProbeService(sp.GetRequiredService<FfProbeService>()));
 
 var app = builder.Build();
 

@@ -82,7 +82,6 @@ public partial class ClipViewer
         await ExecuteOnPlayers(async player => await player.SetTimeAsync(secondsIntoSegment));
 
         TimelineValue = targetTimelineSeconds;
-        _ignoreTimelineValue = targetTimelineSeconds;
 
         if (wasPlaying)
         {
@@ -135,7 +134,6 @@ public partial class ClipViewer
         var currentTime = _currentSegment.StartDate.AddSeconds(seconds);
         var secondsSinceClipStart = (currentTime - _clip.StartDate).TotalSeconds;
 
-        _ignoreTimelineValue = secondsSinceClipStart;
         TimelineValue = secondsSinceClipStart;
 
         // Update SEI HUD with current frame data

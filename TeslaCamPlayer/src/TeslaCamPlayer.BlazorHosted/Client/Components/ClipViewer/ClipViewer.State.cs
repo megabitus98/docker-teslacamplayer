@@ -17,7 +17,6 @@ public partial class ClipViewer
     private bool _isPlaying;
     private ClipVideoSegment _currentSegment;
     private double _timelineMaxSeconds;
-    private double _ignoreTimelineValue;
     private bool _wasPlayingBeforeScrub;
     private bool _isScrubbing;
     private double _timelineValue;
