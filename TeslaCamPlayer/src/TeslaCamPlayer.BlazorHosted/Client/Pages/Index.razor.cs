@@ -47,6 +47,8 @@ public partial class Index : ComponentBase, IAsyncDisposable
 
     private bool _enableDelete = true;
     private string _speedUnit = "kmh";
+    private string _timeFormat = TimeFormats.DefaultTimeFormat;
+    private string _dateFormat = TimeFormats.DefaultDateFormat;
     private AppSettingsResponse _appSettings;
     private bool _pendingSetupDialog;
 
@@ -84,12 +86,16 @@ public partial class Index : ComponentBase, IAsyncDisposable
             var config = await HttpClient.GetFromNewtonsoftJsonAsync<AppConfig>("Api/GetConfig");
             _enableDelete = config?.EnableDelete ?? true;
             _speedUnit = config?.SpeedUnit ?? "kmh";
+            _timeFormat = config?.TimeFormat ?? TimeFormats.DefaultTimeFormat;
+            _dateFormat = config?.DateFormat ?? TimeFormats.DefaultDateFormat;
         }
         catch
         {
             // If config fetch fails, default to showing delete (backward compatibility)
             _enableDelete = true;
             _speedUnit = "kmh";
+            _timeFormat = TimeFormats.DefaultTimeFormat;
+            _dateFormat = TimeFormats.DefaultDateFormat;
         }
     }
 

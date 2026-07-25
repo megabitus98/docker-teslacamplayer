@@ -127,7 +127,7 @@
                                         }
                                     </div>
                                     <div class="date">
-                                        @((context.Event?.Timestamp ?? context.StartDate).ToString("dd MMM yy h:mm tt"))
+                                        @((context.Event?.Timestamp ?? context.StartDate).ToString($"{TimeFormats.DatePattern(_dateFormat)} {TimeFormats.ShortTimePattern(_timeFormat)}"))
                                     </div>
                                     <div class="location">
                                         @context.Event?.GetStreetAndCity()
@@ -157,6 +157,8 @@
     <MudMainContent Class="viewer-container">
         <ClipViewer @ref="_clipViewer"
             SpeedUnit="@_speedUnit"
+            TimeFormat="@_timeFormat"
+            DateFormat="@_dateFormat"
             PreviousButtonClicked="PreviousButtonClicked"
             NextButtonClicked="NextButtonClicked"
             CameraFilter="_cameraFilter"

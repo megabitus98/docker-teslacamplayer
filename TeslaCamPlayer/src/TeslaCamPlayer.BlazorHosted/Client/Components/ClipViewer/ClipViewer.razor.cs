@@ -25,6 +25,12 @@ public partial class ClipViewer : ComponentBase, IDisposable
     public string SpeedUnit { get; set; } = "kmh";
 
     [Parameter]
+    public string TimeFormat { get; set; } = TimeFormats.DefaultTimeFormat;
+
+    [Parameter]
+    public string DateFormat { get; set; } = TimeFormats.DefaultDateFormat;
+
+    [Parameter]
     public bool IsExportMode { get; set; }
 
     protected override void OnInitialized()
@@ -172,7 +178,8 @@ public partial class ClipViewer : ComponentBase, IDisposable
     private string IntervalLabel((double Start, double End) interval)
     {
         var (start, end) = ToClipTime(interval);
-        return $"{start:hh:mm:ss tt} → {end:hh:mm:ss tt}";
+        var pattern = TimeFormats.TimePattern(TimeFormat);
+        return $"{start.ToString(pattern)} → {end.ToString(pattern)}";
     }
 
     public (IReadOnlyList<Cameras> OrderedCameras, int Columns) GetVisibleCamerasAndColumns()
@@ -206,10 +213,10 @@ public partial class ClipViewer : ComponentBase, IDisposable
     }
 
     private string ExportStartDisplay()
-        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.Start).ToString("hh:mm:ss tt");
+        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.Start).ToString(TimeFormats.TimePattern(TimeFormat));
 
     private string ExportEndDisplay()
-        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.End).ToString("hh:mm:ss tt");
+        => _clip == null ? string.Empty : _clip.StartDate.AddSeconds(_exportRange.End).ToString(TimeFormats.TimePattern(TimeFormat));
 
     private string ExportDurationDisplay()
     {

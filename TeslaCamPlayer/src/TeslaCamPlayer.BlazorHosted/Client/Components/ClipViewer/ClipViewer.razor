@@ -143,7 +143,7 @@
             }
         }
         <div class="seeker-slider-container @(IsExportMode ? "export-mode" : "")">
-            <div class="current-time-container">@(_clip?.StartDate.ToString("hh:mm:ss tt"))</div>
+            <div class="current-time-container">@(_clip?.StartDate.ToString(TimeFormats.TimePattern(TimeFormat)))</div>
             <div class="slider-container"
                  @ref="_sliderContainerRef"
                  @onpointermove="@OnSliderContainerPointerMove"
@@ -187,7 +187,7 @@
                 }
             </div>
             <div class="time-container">
-                @_clip?.EndDate.ToString("hh:mm:ss tt")
+                @_clip?.EndDate.ToString(TimeFormats.TimePattern(TimeFormat))
             </div>
         </div>
     </div>

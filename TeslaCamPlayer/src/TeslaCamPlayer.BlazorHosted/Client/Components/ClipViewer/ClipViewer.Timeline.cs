@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using TeslaCamPlayer.BlazorHosted.Shared.Models;
 
 namespace TeslaCamPlayer.BlazorHosted.Client.Components;
 
@@ -14,7 +15,7 @@ public partial class ClipViewer
         }
 
         var currentTime = _clip.StartDate.AddSeconds(TimelineValue);
-        return currentTime.ToString("hh:mm:ss tt");
+        return currentTime.ToString(TimeFormats.TimePattern(TimeFormat));
     }
 
     private async Task TimelineSliderPointerDown()
