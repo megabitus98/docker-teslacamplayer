@@ -31,7 +31,7 @@
             <MudIconButton Icon="@Icons.Material.Filled.Settings" Color="Color.Inherit" OnClick="@OpenSettingsDialog" />
         </MudTooltip>
         <MudIconButton Icon="@Icons.Custom.Brands.GitHub" Color="Color.Inherit" Href="https://github.com/megabitus98/docker-teslacamplayer" Target="_blank" />
-        <MudBadge Dot="true" Color="Color.Warning" Overlap="true" Visible="@(_updateCheck?.UpdateAvailable == true)">
+        <MudBadge Dot="true" Color="Color.Warning" Overlap="false" Visible="@(_updateCheck?.UpdateAvailable == true)">
             @if (_updateCheck?.UpdateAvailable == true)
             {
                 <MudTooltip Text="@($"New version {_updateCheck.Latest} available — release notes")">
