@@ -408,6 +408,13 @@ public class SettingsProvider : ISettingsProvider
             settings.SpeedUnit = "kmh";
         }
 
+        if (Array.IndexOf(TimeFormats.TimeFormatOptions, settings.TimeFormat) < 0)
+        {
+            settings.TimeFormat = TimeFormats.DefaultTimeFormat;
+        }
+
+        settings.DateFormat = TimeFormats.DatePattern(settings.DateFormat);
+
         if (string.IsNullOrWhiteSpace(settings.CacheDatabasePath))
         {
             if (!string.IsNullOrWhiteSpace(settings.CacheFilePath))
@@ -636,6 +643,26 @@ public class SettingsProvider : ISettingsProvider
                 ParseSpeedUnit,
                 options: new[] { "kmh", "mph" }),
             new AppSettingDefinition(
+                nameof(Settings.TimeFormat),
+                "Time format",
+                "12-hour or 24-hour clock for the UI and exported timestamps.",
+                "select",
+                new[] { "TIME_FORMAT", "TimeFormat" },
+                settings => settings.TimeFormat,
+                (settings, value) => settings.TimeFormat = value,
+                value => ParseOneOf(value, TimeFormats.TimeFormatOptions),
+                options: TimeFormats.TimeFormatOptions),
+            new AppSettingDefinition(
+                nameof(Settings.DateFormat),
+                "Date format",
+                "Date layout for the UI and exported timestamps.",
+                "select",
+                new[] { "DATE_FORMAT", "DateFormat" },
+                settings => settings.DateFormat,
+                (settings, value) => settings.DateFormat = value,
+                value => ParseOneOf(value, TimeFormats.DateFormatOptions),
+                options: TimeFormats.DateFormatOptions),
+            new AppSettingDefinition(
                 nameof(Settings.ExportRootPath),
                 "Export root path",
                 "Folder where exported videos are written.",
@@ -750,6 +777,20 @@ public class SettingsProvider : ISettingsProvider
             "0" or "false" or "no" or "off" => ParseResult.Ok("false"),
             _ => ParseResult.Fail("Use true or false.")
         };
+    }
+
+    private static ParseResult ParseOneOf(string? value, string[] options)
+    {
+        var trimmed = value?.Trim();
+        foreach (var option in options)
+        {
+            if (string.Equals(trimmed, option, StringComparison.OrdinalIgnoreCase))
+            {
+                return ParseResult.Ok(option);
+            }
+        }
+
+        return ParseResult.Fail($"Use one of: {string.Join(", ", options)}.");
     }
 
     private static ParseResult ParseSpeedUnit(string? value)

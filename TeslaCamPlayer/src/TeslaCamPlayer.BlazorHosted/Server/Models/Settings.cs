@@ -1,4 +1,6 @@
-﻿namespace TeslaCamPlayer.BlazorHosted.Server.Models;
+﻿using TeslaCamPlayer.BlazorHosted.Shared.Models;
+
+namespace TeslaCamPlayer.BlazorHosted.Server.Models;
 
 public class Settings
 {
@@ -7,6 +9,12 @@ public class Settings
     public string CacheDatabasePath { get; set; }
     public bool EnableDelete { get; set; } = true;
     public string SpeedUnit { get; set; } = "kmh";
+
+    /// <summary>"12h" or "24h" — drives all clock displays and the export timestamp burn-in.</summary>
+    public string TimeFormat { get; set; } = TimeFormats.DefaultTimeFormat;
+
+    /// <summary>One of TimeFormats.DateFormatOptions — drives date displays and the export burn-in.</summary>
+    public string DateFormat { get; set; } = TimeFormats.DefaultDateFormat;
     public string ExportRootPath { get; set; }
     public int ExportRetentionHours { get; set; } = 24;
     public int IndexingBatchSize { get; set; } = 1000;

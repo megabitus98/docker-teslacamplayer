@@ -98,7 +98,13 @@ public class ApiController : ControllerBase
     public AppConfig GetConfig()
     {
         var settings = _settingsProvider.Settings;
-        return new AppConfig { EnableDelete = settings.EnableDelete, SpeedUnit = settings.SpeedUnit };
+        return new AppConfig
+        {
+            EnableDelete = settings.EnableDelete,
+            SpeedUnit = settings.SpeedUnit,
+            TimeFormat = settings.TimeFormat,
+            DateFormat = settings.DateFormat
+        };
     }
 
     [HttpGet]
