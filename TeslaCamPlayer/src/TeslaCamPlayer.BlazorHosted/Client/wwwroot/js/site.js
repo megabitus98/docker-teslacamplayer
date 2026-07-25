@@ -185,7 +185,8 @@ window.clipViewer.observeVideoFraming = function (gridEl) {
     const update = () => {
         for (const tile of gridEl.querySelectorAll(".grid-tile")) {
             const video = tile.querySelector("video");
-            if (!video || !video.videoWidth || !video.videoHeight) {
+            const label = tile.querySelector(".tile-label");
+            if (!label || !video || !video.videoWidth || !video.videoHeight) {
                 continue;
             }
             const tw = tile.clientWidth;
@@ -193,8 +194,10 @@ window.clipViewer.observeVideoFraming = function (gridEl) {
             const scale = Math.min(tw / video.videoWidth, th / video.videoHeight);
             const insetX = Math.max(0, (tw - video.videoWidth * scale) / 2);
             const insetY = Math.max(0, (th - video.videoHeight * scale) / 2);
-            tile.style.setProperty("--video-inset-x", insetX.toFixed(1) + "px");
-            tile.style.setProperty("--video-inset-y", insetY.toFixed(1) + "px");
+            // Vars live on the label, not the tile: Blazor re-renders rewrite the tile's
+            // style attribute (GetTileStyle) and would wipe them.
+            label.style.setProperty("--video-inset-x", insetX.toFixed(1) + "px");
+            label.style.setProperty("--video-inset-y", insetY.toFixed(1) + "px");
         }
     };
 
