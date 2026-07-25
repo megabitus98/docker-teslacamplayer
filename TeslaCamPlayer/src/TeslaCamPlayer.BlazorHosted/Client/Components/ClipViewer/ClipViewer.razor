@@ -170,7 +170,8 @@
                            @bind-Value="@TimelineValue"
                            Variant="Variant.Filled"
                            @onpointerdown="@TimelineSliderPointerDown"
-                           @onpointerup="@TimelineSliderPointerUp" />
+                           @onpointerup="@TimelineSliderPointerUp"
+                           @onkeyup="@TimelineSliderKeyUp" />
                 <div class="event-marker" style="@EventMarkerStyle()"></div>
                 @foreach (var segment in _clip?.Segments ?? Array.Empty<ClipVideoSegment>())
                 {

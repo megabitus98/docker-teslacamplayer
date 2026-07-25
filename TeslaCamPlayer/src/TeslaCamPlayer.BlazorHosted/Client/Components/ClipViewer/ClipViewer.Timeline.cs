@@ -38,6 +38,26 @@ public partial class ClipViewer
         }
     }
 
+    private static readonly string[] SliderNavigationKeys =
+        { "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown" };
+
+    /// <summary>
+    /// Keyboard changes the bound value without any pointer event, and the debounced seek is only armed
+    /// while <see cref="_isScrubbing"/> is set — so without this the thumb moves and the video never
+    /// follows. Mirrors <see cref="TimelineSliderPointerUp"/> for the keys the range input handles.
+    /// </summary>
+    private async Task TimelineSliderKeyUp(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (!SliderNavigationKeys.Contains(e.Key))
+        {
+            return;
+        }
+
+        _isScrubbing = true;
+        await ScrubToSliderTime();
+        _isScrubbing = false;
+    }
+
     private async Task ScrubToSliderTime()
     {
         _setVideoTimeDebounceTimer.Enabled = false;
