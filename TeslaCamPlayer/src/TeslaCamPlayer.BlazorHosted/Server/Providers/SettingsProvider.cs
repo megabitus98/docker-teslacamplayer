@@ -416,6 +416,11 @@ public class SettingsProvider : ISettingsProvider
         settings.DateFormat = TimeFormats.DatePattern(settings.DateFormat);
         settings.UiBlurPx = Math.Clamp(settings.UiBlurPx, 0, 24);
 
+        if (settings.ExportHwaccel != "auto" && settings.ExportHwaccel != "off")
+        {
+            settings.ExportHwaccel = "auto";
+        }
+
         if (string.IsNullOrWhiteSpace(settings.CacheDatabasePath))
         {
             if (!string.IsNullOrWhiteSpace(settings.CacheFilePath))
@@ -691,6 +696,16 @@ public class SettingsProvider : ISettingsProvider
                 settings => settings.ExportRetentionHours.ToString(CultureInfo.InvariantCulture),
                 (settings, value) => settings.ExportRetentionHours = int.Parse(value, CultureInfo.InvariantCulture),
                 value => ParseInt(value, min: 0)),
+            new AppSettingDefinition(
+                nameof(Settings.ExportHwaccel),
+                "Export hardware acceleration",
+                "auto: use GPU decode/encode when available (NVENC, QuickSync, VAAPI, VideoToolbox). off: always CPU (libx264).",
+                "select",
+                new[] { "EXPORT_HWACCEL", "ExportHwaccel" },
+                settings => settings.ExportHwaccel,
+                (settings, value) => settings.ExportHwaccel = value,
+                value => ParseOneOf(value, new[] { "auto", "off" }),
+                options: new[] { "auto", "off" }),
             new AppSettingDefinition(
                 nameof(Settings.IndexingBatchSize),
                 "Indexing batch size",

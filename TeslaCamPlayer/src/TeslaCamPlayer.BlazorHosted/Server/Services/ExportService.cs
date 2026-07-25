@@ -28,6 +28,7 @@ public class ExportService : IExportService
     private readonly ISeiParserService _seiParser;
     private readonly IHudRendererService _hudRenderer;
     private readonly IMp4TimingService _mp4Timing;
+    private readonly IFfmpegCapabilities _ffmpegCapabilities;
 
     private readonly ConcurrentDictionary<string, ExportStatus> _status = new();
     private readonly ConcurrentDictionary<string, string> _outputs = new();
@@ -100,7 +101,7 @@ public class ExportService : IExportService
             ErrorMessage = errorMessage
         }, reason ?? state.ToString().ToLowerInvariant());
 
-    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext, ISeiParserService seiParser, IHudRendererService hudRenderer, IMp4TimingService mp4Timing)
+    public ExportService(ISettingsProvider settingsProvider, IClipsService clipsService, IHubContext<StatusHub> hubContext, ISeiParserService seiParser, IHudRendererService hudRenderer, IMp4TimingService mp4Timing, IFfmpegCapabilities ffmpegCapabilities)
     {
         _settingsProvider = settingsProvider;
         _clipsService = clipsService;
@@ -108,6 +109,7 @@ public class ExportService : IExportService
         _seiParser = seiParser;
         _hudRenderer = hudRenderer;
         _mp4Timing = mp4Timing;
+        _ffmpegCapabilities = ffmpegCapabilities;
     }
 
     public Task<string> StartExportAsync(ExportRequest request)
@@ -340,6 +342,11 @@ public class ExportService : IExportService
             argv.Add("-nostdin");
             AddArg(argv, "-progress", "pipe:1");
 
+            var hwaccelOff = string.Equals(_settingsProvider.Settings.ExportHwaccel, "off", StringComparison.OrdinalIgnoreCase);
+            var encoder = hwaccelOff ? ExportEncoder.Software : _ffmpegCapabilities.GetPreferredEncoder();
+            foreach (var a in ExportEncoder.GlobalArgs(encoder))
+                argv.Add(a);
+
             // Inputs: for each real camera chunk, add -ss -t -i file (fillers are generated in the graph)
             var inputIndexMap = new Dictionary<(Cameras cam, int partIndex), int>();
             var globalInputIndex = 0;
@@ -352,6 +359,10 @@ public class ExportService : IExportService
                     if (p.IsFiller)
                         continue;
 
+                    // GPU decode when available; decoded frames land back in system memory
+                    // (no -hwaccel_output_format), so the filter graph is untouched.
+                    if (!hwaccelOff)
+                        AddArg(argv, "-hwaccel", "auto");
                     argv.Add("-accurate_seek");
                     AddArg(argv, "-ss", FormatTimeArg(p.Start));
                     AddArg(argv, "-t", FormatTimeArg(p.Duration));
@@ -892,108 +903,136 @@ public class ExportService : IExportService
                 }
             }
 
-            AddArg(argv, "-filter_complex", filter.ToString());
-
-            // map final
-            AddArg(argv, "-map", $"[{finalLabel}]");
-
-            // No audio
-            argv.Add("-an");
-
-            // Codec / container options
-            AddCodecArgs(argv, request);
-
-            // Embed metadata: creation_time and simple title/comment with event time
-            try
+            List<string> BuildFullArgv(string enc)
             {
-                var eventTime = clip.Event?.Timestamp ?? start;
-                var utc = eventTime.ToUniversalTime().ToString("o");
-                AddArg(argv, "-metadata", "title=TeslaCamPlayer Export");
+                var full = new List<string>(argv);
 
-                // Build comment with EventTimeUTC, Location, and EventPath
-                var commentParts = new List<string> { $"EventTimeUTC={utc}" };
-                if (!string.IsNullOrWhiteSpace(locationDescription))
+                var filterText = filter.ToString();
+                var mapLabel = finalLabel;
+                var suffix = ExportEncoder.FilterSuffix(enc);
+                if (suffix.Length > 0)
                 {
-                    commentParts.Add($"Location={locationDescription}");
+                    // Extra chain, not string surgery: upload the final frames to the GPU for vaapi.
+                    filterText += $";[{mapLabel}]{suffix.TrimStart(',')}[hw_out]";
+                    mapLabel = "hw_out";
                 }
-                if (!string.IsNullOrWhiteSpace(request.ClipDirectoryPath))
-                {
-                    commentParts.Add($"EventPath={request.ClipDirectoryPath}");
-                }
-                AddArg(argv, "-metadata", $"comment={string.Join("; ", commentParts)}");
 
-                AddArg(argv, "-metadata", $"creation_time={utc}");
-            }
-            catch { }
+                AddArg(full, "-filter_complex", filterText);
 
-            argv.Add(tempOutputFile);
+                // map final
+                AddArg(full, "-map", $"[{mapLabel}]");
 
-            var psi = new ProcessStartInfo("ffmpeg")
-            {
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+                // No audio
+                full.Add("-an");
 
-            foreach (var a in argv)
-            {
-                psi.ArgumentList.Add(a);
-            }
+                // Codec / container options
+                AddCodecArgs(full, request, enc);
 
-            string QuoteLog(string s)
-                => string.IsNullOrEmpty(s) ? s : (s.Any(char.IsWhiteSpace) ? $"\"{s}\"" : s);
-
-            Log.Information("Starting export {JobId}: ffmpeg {Args}", jobId, string.Join(' ', argv.Select(QuoteLog)));
-
-            var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            var sw = Stopwatch.StartNew();
-            // Same cadence as RefreshProgressService; terminal states broadcast unthrottled elsewhere.
-            var lastProgressBroadcastUtc = DateTime.MinValue;
-            proc.OutputDataReceived += (_, e) =>
-            {
-                if (string.IsNullOrWhiteSpace(e.Data)) return;
+                // Embed metadata: creation_time and simple title/comment with event time
                 try
                 {
-                    // Parse progress lines like: out_time_ms=...
-                    var line = e.Data.Trim();
-                    if (line.StartsWith("out_time_ms="))
-                    {
-                        var msStr = line.Substring("out_time_ms=".Length);
-                        if (double.TryParse(msStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var outMs))
-                        {
-                            var now = DateTime.UtcNow;
-                            if (now - lastProgressBroadcastUtc < TimeSpan.FromMilliseconds(250))
-                                return;
-                            lastProgressBroadcastUtc = now;
+                    var eventTime = clip.Event?.Timestamp ?? start;
+                    var utc = eventTime.ToUniversalTime().ToString("o");
+                    AddArg(full, "-metadata", "title=TeslaCamPlayer Export");
 
-                            var sec = outMs / 1000000.0;
-                            var pct = Math.Clamp(totalSeconds > 0 ? (sec / totalSeconds) * 100.0 : 0, 0, 100);
-                            var eta = totalSeconds > 0 ? TimeSpan.FromSeconds(Math.Max(0, totalSeconds - sec)) : (TimeSpan?)null;
-                            SetState(jobId, ExportState.Running, pct, eta: eta, reason: "progress");
-                        }
+                    // Build comment with EventTimeUTC, Location, and EventPath
+                    var commentParts = new List<string> { $"EventTimeUTC={utc}" };
+                    if (!string.IsNullOrWhiteSpace(locationDescription))
+                    {
+                        commentParts.Add($"Location={locationDescription}");
                     }
+                    if (!string.IsNullOrWhiteSpace(request.ClipDirectoryPath))
+                    {
+                        commentParts.Add($"EventPath={request.ClipDirectoryPath}");
+                    }
+                    AddArg(full, "-metadata", $"comment={string.Join("; ", commentParts)}");
+
+                    AddArg(full, "-metadata", $"creation_time={utc}");
                 }
                 catch { }
-            };
 
-            proc.ErrorDataReceived += (_, e) =>
-            {
-                // Keep for debugging visibility
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                    Log.Debug("ffmpeg[{JobId}] {Line}", jobId, e.Data);
-            };
+                full.Add(tempOutputFile);
+                return full;
+            }
 
-            proc.Start();
-            proc.BeginOutputReadLine();
-            proc.BeginErrorReadLine();
+            async Task<int> RunFfmpegAsync(List<string> tokens)
+            {
+                var psi = new ProcessStartInfo("ffmpeg")
+                {
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
 
-            using (cancel.Register(() =>
+                foreach (var a in tokens)
+                {
+                    psi.ArgumentList.Add(a);
+                }
+
+                string QuoteLog(string s)
+                    => string.IsNullOrEmpty(s) ? s : (s.Any(char.IsWhiteSpace) ? $"\"{s}\"" : s);
+
+                Log.Information("Starting export {JobId}: ffmpeg {Args}", jobId, string.Join(' ', tokens.Select(QuoteLog)));
+
+                var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+                // Same cadence as RefreshProgressService; terminal states broadcast unthrottled elsewhere.
+                var lastProgressBroadcastUtc = DateTime.MinValue;
+                proc.OutputDataReceived += (_, e) =>
+                {
+                    if (string.IsNullOrWhiteSpace(e.Data)) return;
+                    try
+                    {
+                        // Parse progress lines like: out_time_ms=...
+                        var line = e.Data.Trim();
+                        if (line.StartsWith("out_time_ms="))
+                        {
+                            var msStr = line.Substring("out_time_ms=".Length);
+                            if (double.TryParse(msStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var outMs))
+                            {
+                                var now = DateTime.UtcNow;
+                                if (now - lastProgressBroadcastUtc < TimeSpan.FromMilliseconds(250))
+                                    return;
+                                lastProgressBroadcastUtc = now;
+
+                                var sec = outMs / 1000000.0;
+                                var pct = Math.Clamp(totalSeconds > 0 ? (sec / totalSeconds) * 100.0 : 0, 0, 100);
+                                var eta = totalSeconds > 0 ? TimeSpan.FromSeconds(Math.Max(0, totalSeconds - sec)) : (TimeSpan?)null;
+                                SetState(jobId, ExportState.Running, pct, eta: eta, reason: "progress");
+                            }
+                        }
+                    }
+                    catch { }
+                };
+
+                proc.ErrorDataReceived += (_, e) =>
+                {
+                    // Keep for debugging visibility
+                    if (!string.IsNullOrWhiteSpace(e.Data))
+                        Log.Debug("ffmpeg[{JobId}] {Line}", jobId, e.Data);
+                };
+
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+
+                using (cancel.Register(() =>
+                {
+                    try { if (!proc.HasExited) proc.Kill(true); } catch { }
+                }))
+                {
+                    await proc.WaitForExitAsync();
+                }
+
+                return proc.ExitCode;
+            }
+
+            var exitCode = await RunFfmpegAsync(BuildFullArgv(encoder));
+            if (exitCode != 0 && !cancel.IsCancellationRequested && encoder != ExportEncoder.Software)
             {
-                try { if (!proc.HasExited) proc.Kill(true); } catch { }
-            }))
-            {
-                await proc.WaitForExitAsync();
+                Log.Warning("Export {JobId}: {Encoder} failed (exit {Code}), retrying with libx264", jobId, encoder, exitCode);
+                SafeDelete(tempOutputFile);
+                exitCode = await RunFfmpegAsync(BuildFullArgv(ExportEncoder.Software));
             }
 
             if (cancel.IsCancellationRequested)
@@ -1003,8 +1042,8 @@ public class ExportService : IExportService
                 return;
             }
 
-            if (proc.ExitCode != 0)
-                throw new InvalidOperationException($"ffmpeg exited with {proc.ExitCode}");
+            if (exitCode != 0)
+                throw new InvalidOperationException($"ffmpeg exited with {exitCode}");
 
             File.Move(tempOutputFile, outputFile, overwrite: true);
             tempOutputFile = null;
@@ -1138,33 +1177,19 @@ public class ExportService : IExportService
         argv.Add(value);
     }
 
-    private static void AddCodecArgs(List<string> args, ExportRequest request)
+    private static void AddCodecArgs(List<string> args, ExportRequest request, string encoder)
     {
         var fmt = SanitizeFormat(request.Format);
         switch (fmt)
         {
             case "mp4":
             case "mov":
-                AddArg(args, "-c:v", "libx264");
-                AddArg(args, "-pix_fmt", "yuv420p");
-                var (preset, crf) = QualityToPresetCrf(request.Quality);
-                AddArg(args, "-preset", preset);
-                AddArg(args, "-crf", crf);
+                args.AddRange(ExportEncoder.CodecArgs(encoder, request.Quality));
                 if (fmt == "mp4")
                 {
                     AddArg(args, "-movflags", "+faststart");
                 }
                 break;
-        }
-    }
-
-    private static (string preset, string crf) QualityToPresetCrf(string q)
-    {
-        switch ((q ?? "").ToLowerInvariant())
-        {
-            case "high": return ("slow", "17");
-            case "low": return ("fast", "24");
-            default: return ("medium", "20");
         }
     }
 
