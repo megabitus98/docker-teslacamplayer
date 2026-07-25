@@ -90,6 +90,7 @@ public partial class ClipViewer : ComponentBase, IDisposable
         TimelineValue = 0;
         _timelineMaxSeconds = (clip.EndDate - clip.StartDate).TotalSeconds;
         _exportRange = (0, _timelineMaxSeconds);
+        _exportIntervals.Clear();
 
         _currentSegment = _clip.Segments.First();
         await SetCurrentSegmentVideosAsync();
@@ -114,11 +115,64 @@ public partial class ClipViewer : ComponentBase, IDisposable
         => Task.CompletedTask;
 
     // Export helpers
-    public (DateTime StartUtc, DateTime EndUtc) GetSelectedInterval()
+
+    /// <summary>
+    /// The committed intervals, or the live marker range when none have been added — so the
+    /// single-range flow keeps working without the user having to press "Add".
+    /// </summary>
+    public IReadOnlyList<(DateTime StartUtc, DateTime EndUtc)> GetSelectedIntervals()
     {
-        var start = _clip.StartDate.AddSeconds(Math.Max(0, Math.Min(_exportRange.Start, _exportRange.End)));
-        var end = _clip.StartDate.AddSeconds(Math.Min(_timelineMaxSeconds, Math.Max(_exportRange.Start, _exportRange.End)));
+        var ranges = _exportIntervals.Count > 0 ? _exportIntervals : new List<(double, double)> { _exportRange };
+        return ranges.Select(ToClipTime).ToList();
+    }
+
+    private (DateTime StartUtc, DateTime EndUtc) ToClipTime((double Start, double End) range)
+    {
+        var start = _clip.StartDate.AddSeconds(Math.Max(0, Math.Min(range.Start, range.End)));
+        var end = _clip.StartDate.AddSeconds(Math.Min(_timelineMaxSeconds, Math.Max(range.Start, range.End)));
         return (start, end);
+    }
+
+    private void AddCurrentInterval()
+    {
+        var start = Math.Max(0, Math.Min(_exportRange.Start, _exportRange.End));
+        var end = Math.Min(_timelineMaxSeconds, Math.Max(_exportRange.Start, _exportRange.End));
+        if (end - start <= 0.01)
+            return;
+
+        _exportIntervals.Add((start, end));
+        MergeIntervals();
+    }
+
+    private void RemoveInterval(int index)
+    {
+        if (index >= 0 && index < _exportIntervals.Count)
+            _exportIntervals.RemoveAt(index);
+    }
+
+    /// <summary>Sorts and merges overlapping or touching intervals so the bands and the total read true.</summary>
+    private void MergeIntervals()
+    {
+        var sorted = _exportIntervals.OrderBy(i => i.Start).ToList();
+        _exportIntervals.Clear();
+
+        foreach (var interval in sorted)
+        {
+            if (_exportIntervals.Count > 0 && interval.Start <= _exportIntervals[^1].End)
+            {
+                var last = _exportIntervals[^1];
+                _exportIntervals[^1] = (last.Start, Math.Max(last.End, interval.End));
+                continue;
+            }
+
+            _exportIntervals.Add(interval);
+        }
+    }
+
+    private string IntervalLabel((double Start, double End) interval)
+    {
+        var (start, end) = ToClipTime(interval);
+        return $"{start:hh:mm:ss tt} → {end:hh:mm:ss tt}";
     }
 
     public (IReadOnlyList<Cameras> OrderedCameras, int Columns) GetVisibleCamerasAndColumns()
@@ -159,8 +213,10 @@ public partial class ClipViewer : ComponentBase, IDisposable
 
     private string ExportDurationDisplay()
     {
-        var dur = TimeSpan.FromSeconds(Math.Max(0, _exportRange.End - _exportRange.Start));
-        return dur.ToString();
+        var seconds = _exportIntervals.Count > 0
+            ? _exportIntervals.Sum(i => i.End - i.Start)
+            : _exportRange.End - _exportRange.Start;
+        return TimeSpan.FromSeconds(Math.Max(0, seconds)).ToString();
     }
 
     private Task OnExportStartChanged(double val)
@@ -180,11 +236,14 @@ public partial class ClipViewer : ComponentBase, IDisposable
     }
 
     private string ExportRangeHighlightStyle()
+        => BandStyle(_exportRange.Start, _exportRange.End);
+
+    private string BandStyle(double start, double end)
     {
         if (_timelineMaxSeconds <= 0) return "display:none;";
 
-        var startPercent = (_exportRange.Start / _timelineMaxSeconds) * 100;
-        var endPercent = (_exportRange.End / _timelineMaxSeconds) * 100;
+        var startPercent = (start / _timelineMaxSeconds) * 100;
+        var endPercent = (end / _timelineMaxSeconds) * 100;
         var width = endPercent - startPercent;
 
         return $"left: {startPercent:F2}%; width: {width:F2}%;";
@@ -218,6 +277,15 @@ public partial class ClipViewer : ComponentBase, IDisposable
 
     private async Task OnSliderContainerPointerMove(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
     {
+        // Nothing captures the pointer, so releasing outside the strip never reaches
+        // OnSliderContainerPointerUp and the marker would follow the next button-less hover.
+        // Clearing before the position is computed means no jump on re-entry.
+        if (e.Buttons == 0)
+        {
+            _draggingMarker = DragMarker.None;
+            return;
+        }
+
         if (_draggingMarker == DragMarker.None || _timelineMaxSeconds <= 0)
         {
             return;

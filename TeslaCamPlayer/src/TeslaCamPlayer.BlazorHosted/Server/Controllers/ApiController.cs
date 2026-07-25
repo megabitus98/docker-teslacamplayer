@@ -18,6 +18,8 @@ namespace TeslaCamPlayer.BlazorHosted.Server.Controllers;
 [Route("Api/[action]")]
 public class ApiController : ControllerBase
 {
+    private const int MaxExportIntervals = 20;
+
     private readonly IClipsService _clipsService;
     private readonly IRefreshProgressService _refreshProgressService;
     private readonly IExportService _exportService;
@@ -287,6 +289,14 @@ public class ApiController : ControllerBase
         {
             Log.Warning("StartExport called with empty clip path.");
             return BadRequest("Clip path is invalid");
+        }
+
+        // ffmpeg input count is intervals x cameras x overlapping segments; an unbounded filtergraph
+        // is an out-of-memory ffmpeg, so cap it here at the trust boundary.
+        if (request.Intervals is { Count: > MaxExportIntervals })
+        {
+            Log.Warning("StartExport called with {Count} intervals, max is {Max}.", request.Intervals.Count, MaxExportIntervals);
+            return BadRequest($"Too many intervals selected (max {MaxExportIntervals}).");
         }
 
         // Validate path is under root

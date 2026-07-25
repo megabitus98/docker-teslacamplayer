@@ -31,6 +31,8 @@ public partial class ClipViewer
     private ElementReference _gridElement;
     private DotNetObjectReference<ClipViewer> _objRef;
     private (double Start, double End) _exportRange;
+    // Committed export intervals, seconds from _clip.StartDate — same basis as _exportRange.
+    private readonly List<(double Start, double End)> _exportIntervals = new();
     private enum DragMarker { None, Start, End }
     private DragMarker _draggingMarker = DragMarker.None;
     private ElementReference _sliderContainerRef;

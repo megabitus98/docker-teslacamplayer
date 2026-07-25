@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using TeslaCamPlayer.BlazorHosted.Server.Helpers;
 using TeslaCamPlayer.BlazorHosted.Server.Hubs;
+using TeslaCamPlayer.BlazorHosted.Server.Models;
 using TeslaCamPlayer.BlazorHosted.Server.Providers.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Server.Services.Interfaces;
 using TeslaCamPlayer.BlazorHosted.Shared.Models;
@@ -227,8 +228,13 @@ public class ExportService : IExportService
             // so a fresh Running status broadcasts an identical payload to the old mutate-and-rebroadcast.
             SetState(jobId, ExportState.Running);
 
-            // Validate request
-            if (request.EndTimeUtc <= request.StartTimeUtc)
+            // Validate request. A request carries either an explicit list of intervals or the legacy
+            // single StartTimeUtc..EndTimeUtc range; both funnel through the same list below.
+            var requestedIntervals = request.Intervals?.Count > 0
+                ? request.Intervals
+                : new List<ExportInterval> { new() { StartTimeUtc = request.StartTimeUtc, EndTimeUtc = request.EndTimeUtc } };
+
+            if (requestedIntervals.All(i => i.EndTimeUtc <= i.StartTimeUtc))
                 throw new InvalidOperationException("End time must be after start time.");
 
             var clip = (await _clipsService.GetClipsAsync(false))
@@ -262,37 +268,57 @@ public class ExportService : IExportService
                     eventLon = lon;
             }
 
-            // Ensure selection is within clip bounds
-            var start = request.StartTimeUtc;
-            var end = request.EndTimeUtc;
-            if (start < clip.StartDate) start = clip.StartDate;
-            if (end > clip.EndDate) end = clip.EndDate;
-            if (end <= start)
+            // Clamp to clip bounds, drop empties, sort and merge overlaps.
+            var intervals = ExportInterval.Normalize(requestedIntervals, clip.StartDate, clip.EndDate);
+            if (intervals.Count == 0)
                 throw new InvalidOperationException("Selected interval is outside clip range.");
 
-            // Build per-camera lists of segment parts
-            var byCamera = new Dictionary<Cameras, List<(string path, double start, double duration)>>();
+            var totalSeconds = ExportInterval.TotalSeconds(intervals);
+            var start = intervals[0].StartTimeUtc;
+
+            Log.Information(
+                "Export {JobId}: {IntervalCount} interval(s), {TotalSeconds:F2}s total",
+                jobId, intervals.Count, totalSeconds);
+
+            // Build per-camera chunk lists, in output order (interval, then segment). A chunk with a null
+            // path is a black filler: it keeps every camera the same length as the output even when a
+            // camera is missing from a segment or the recording has a hole, which xstack otherwise
+            // papers over by freezing that tile on its last frame.
+            var byCamera = new Dictionary<Cameras, List<Chunk>>();
             foreach (var cam in request.OrderedCameras)
             {
                 byCamera[cam] = new();
             }
 
-            foreach (var seg in clip.Segments)
+            for (var intervalIndex = 0; intervalIndex < intervals.Count; intervalIndex++)
             {
-                var segStart = seg.StartDate;
-                var segEnd = seg.EndDate;
-                var overlapStart = segStart > start ? segStart : start;
-                var overlapEnd = segEnd < end ? segEnd : end;
-                if (overlapEnd <= overlapStart)
-                    continue;
+                var interval = intervals[intervalIndex];
 
                 foreach (var cam in request.OrderedCameras)
                 {
-                    var vf = CameraToFile(seg, cam);
-                    if (vf == null) continue;
-                    var startOffset = (overlapStart - segStart).TotalSeconds;
-                    var dur = (overlapEnd - overlapStart).TotalSeconds;
-                    byCamera[cam].Add((vf.FilePath, startOffset, dur));
+                    var cursor = interval.StartTimeUtc;
+
+                    foreach (var seg in clip.Segments)
+                    {
+                        var overlapStart = seg.StartDate > interval.StartTimeUtc ? seg.StartDate : interval.StartTimeUtc;
+                        var overlapEnd = seg.EndDate < interval.EndTimeUtc ? seg.EndDate : interval.EndTimeUtc;
+                        if (overlapEnd <= overlapStart)
+                            continue;
+
+                        var vf = CameraToFile(seg, cam);
+                        if (vf == null)
+                            continue;
+
+                        AddFillerIfGap(byCamera[cam], (overlapStart - cursor).TotalSeconds, intervalIndex);
+                        byCamera[cam].Add(new Chunk(
+                            vf.FilePath,
+                            (overlapStart - seg.StartDate).TotalSeconds,
+                            (overlapEnd - overlapStart).TotalSeconds,
+                            intervalIndex));
+                        cursor = overlapEnd;
+                    }
+
+                    AddFillerIfGap(byCamera[cam], (interval.EndTimeUtc - cursor).TotalSeconds, intervalIndex);
                 }
             }
 
@@ -314,7 +340,7 @@ public class ExportService : IExportService
             argv.Add("-nostdin");
             AddArg(argv, "-progress", "pipe:1");
 
-            // Inputs: for each camera part, add -ss -t -i file
+            // Inputs: for each real camera chunk, add -ss -t -i file (fillers are generated in the graph)
             var inputIndexMap = new Dictionary<(Cameras cam, int partIndex), int>();
             var globalInputIndex = 0;
             foreach (var cam in request.OrderedCameras)
@@ -323,10 +349,13 @@ public class ExportService : IExportService
                 for (int i = 0; i < parts.Count; i++)
                 {
                     var p = parts[i];
+                    if (p.IsFiller)
+                        continue;
+
                     argv.Add("-accurate_seek");
-                    AddArg(argv, "-ss", FormatTimeArg(p.start));
-                    AddArg(argv, "-t", FormatTimeArg(p.duration));
-                    AddArg(argv, "-i", p.path);
+                    AddArg(argv, "-ss", FormatTimeArg(p.Start));
+                    AddArg(argv, "-t", FormatTimeArg(p.Duration));
+                    AddArg(argv, "-i", p.Path);
                     inputIndexMap[(cam, i)] = globalInputIndex++;
                 }
             }
@@ -348,52 +377,65 @@ public class ExportService : IExportService
 
             var labelFont = ":fontcolor=white:fontsize=20:box=1:boxcolor=black@0.4:x=10:y=8";
 
+            // Each chunk is normalised to the cell size before concat, so a black filler splices in
+            // cleanly next to real footage. (Scaling per chunk instead of once after concat costs the
+            // same pixels — the concat inputs just have to agree on size, SAR, rate and pixel format.)
+            const string chunkFormat = ",setsar=1,format=yuv420p";
             foreach (var cam in request.OrderedCameras)
             {
                 var parts = byCamera[cam];
-                if (parts.Count == 0)
-                {
-                    // create a solid black tile if no input available to keep layout consistent
-                    var dur = (end - start).TotalSeconds;
-                    var nullLbl = $"color=c=black:size={cellW}x{cellH}:duration={FormatTimeArg(dur)}[color_{cam}]";
-                    filter.Append(nullLbl).Append(';');
-                    camOutputs.Add($"[color_{cam}]");
-                    continue;
-                }
+                var partLabels = new List<string>();
 
-                // Concat parts for this camera
-                var inputs = new List<string>();
                 for (int i = 0; i < parts.Count; i++)
                 {
-                    var idx = inputIndexMap[(cam, i)];
-                    inputs.Add($"[{idx}:v]");
+                    var label = $"[{cam}_p{i}]";
+                    if (parts[i].IsFiller)
+                    {
+                        filter.Append($"color=c=black:size={cellW}x{cellH}:rate=30:duration={FormatTimeArg(parts[i].Duration)}{chunkFormat}");
+                    }
+                    else
+                    {
+                        // -ss/-t lands on frame boundaries and can overshoot by a frame; trim pins the
+                        // chunk to its exact length so the interval seams (and the timestamp windows
+                        // gated on them) don't drift.
+                        filter.Append($"[{inputIndexMap[(cam, i)]}:v]")
+                              .Append($"scale={cellW}:{cellH}:force_original_aspect_ratio=decrease,pad={cellW}:{cellH}:(ow-iw)/2:(oh-ih)/2{chunkFormat},fps=30")
+                              .Append($",trim=duration={FormatTimeArg(parts[i].Duration)},setpts=PTS-STARTPTS");
+                    }
+
+                    filter.Append(label).Append(';');
+                    partLabels.Add(label);
+                }
+
+                // No chunks at all means the camera was absent for the whole selection.
+                if (partLabels.Count == 0)
+                {
+                    var blackLabel = $"[{cam}_p0]";
+                    filter.Append($"color=c=black:size={cellW}x{cellH}:rate=30:duration={FormatTimeArg(totalSeconds)}{chunkFormat}")
+                          .Append(blackLabel)
+                          .Append(';');
+                    partLabels.Add(blackLabel);
                 }
 
                 var concatOut = $"[{cam}_concat]";
-                if (inputs.Count == 1)
+                if (partLabels.Count == 1)
                 {
-                    filter.Append(string.Join(string.Empty, inputs)).Append("setpts=PTS-STARTPTS").Append(concatOut).Append(';');
+                    filter.Append(partLabels[0]).Append("setpts=PTS-STARTPTS").Append(concatOut).Append(';');
                 }
                 else
                 {
-                    filter.Append(string.Join(string.Empty, inputs))
-                          .Append($"concat=n={inputs.Count}:v=1:a=0")
+                    filter.Append(string.Join(string.Empty, partLabels))
+                          .Append($"concat=n={partLabels.Count}:v=1:a=0")
                           .Append(concatOut)
                           .Append(';');
                 }
 
-                var scaled = $"[{cam}_scaled]";
-                filter.Append(concatOut)
-                      .Append($"scale={cellW}:{cellH}:force_original_aspect_ratio=decrease,pad={cellW}:{cellH}:(ow-iw)/2:(oh-ih)/2")
-                      .Append(scaled)
-                      .Append(';');
-
-                var final = scaled;
+                var final = concatOut;
                 if (request.IncludeCameraLabels)
                 {
                     var labelText = CameraLabel(cam);
                     var labeled = $"[{cam}_labeled]";
-                    filter.Append(scaled)
+                    filter.Append(concatOut)
                           .Append($"drawtext=text='{EscapeDrawText(labelText)}'{labelFont}")
                           .Append(labeled)
                           .Append(';');
@@ -435,7 +477,7 @@ public class ExportService : IExportService
 
             // Location overlay: Use FFmpeg drawtext only when Python HUD renderer won't be invoked
             // Python HUD renders location when location overlay is requested AND front camera exists
-            bool hasFrontCamera = byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Count > 0;
+            bool hasFrontCamera = byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Any(c => !c.IsFiller);
             bool wantsLocationOverlay = request.IncludeLocationOverlay;
             bool wantsSeiHud = request.IncludeSeiHud;
             bool willUsePythonHud = (wantsSeiHud || wantsLocationOverlay) && hasFrontCamera;
@@ -459,16 +501,33 @@ public class ExportService : IExportService
                 }
             }
 
-            // Timestamp overlay on final output if requested
+            // Timestamp overlay on final output if requested.
+            // %{pts:localtime:E} renders localtime(E + t), i.e. one clock running the length of the
+            // output — so each interval gets its own drawtext, offset back by where it starts in the
+            // output and gated to that span, otherwise intervals 2..N would keep counting through the
+            // gaps. gte/lt rather than between() so neighbours don't both draw on the seam frame.
             if (request.IncludeTimestamp)
             {
-                var startEpoch = new DateTimeOffset(start.ToUniversalTime()).ToUnixTimeSeconds();
                 var ts = "[ts]";
-                var tsDrawText = $@"setpts=PTS-STARTPTS,drawtext=text='%{{pts\:localtime\:{startEpoch}\:%Y-%m-%d %X}}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4:x=w-tw-10:y=h-th-10";
                 filter.Append(';')
                       .Append('[').Append(finalLabel).Append(']')
-                      .Append(tsDrawText)
-                      .Append(ts);
+                      .Append("setpts=PTS-STARTPTS");
+
+                var offsetSeconds = 0d;
+                for (var i = 0; i < intervals.Count; i++)
+                {
+                    var interval = intervals[i];
+                    var epoch = new DateTimeOffset(interval.StartTimeUtc.ToUniversalTime()).ToUnixTimeMilliseconds() / 1000.0 - offsetSeconds;
+                    var spanEnd = offsetSeconds + interval.DurationSeconds;
+                    // Overshoot the last span so a final frame landing exactly on the boundary still draws.
+                    var enableEnd = i == intervals.Count - 1 ? spanEnd + 1 : spanEnd;
+                    filter.Append(',')
+                          .Append($@"drawtext=text='%{{pts\:localtime\:{FormatTimeArg(epoch)}\:%Y-%m-%d %X}}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.4:x=w-tw-10:y=h-th-10")
+                          .Append($":enable='gte(t,{FormatTimeArg(offsetSeconds)})*lt(t,{FormatTimeArg(enableEnd)})'");
+                    offsetSeconds = spanEnd;
+                }
+
+                filter.Append(ts);
                 finalLabel = "ts";
             }
 
@@ -483,185 +542,228 @@ public class ExportService : IExportService
                 Log.Information("[LOCATION DEBUG] Python HUD section entered - will attempt to render HUD/location");
 
                 const double seiFrameRate = 30.0; // HUD rendering frame rate
-                var exportDurationSeconds = (end - start).TotalSeconds;
+                // The HUD is overlaid with shortest=1, and the video is sum(ceil(fps*chunk)) frames while a
+                // naive HUD would be ceil(fps*total) — always the shorter of the two, so it would trim the
+                // video and still exit 0. Slack of one frame per chunk makes the HUD the shorter input.
+                var maxChunks = byCamera.Values.Select(c => c.Count).DefaultIfEmpty(0).Max();
+                var exportDurationSeconds = ExportTiming.HudDurationSeconds(totalSeconds, maxChunks, seiFrameRate);
                 List<SeiMetadata> hudFrames = null;
                 var hudFramesContainSei = false;
 
                 // Find front camera segment info for SEI extraction using MP4 frame timing
-                if (byCamera.ContainsKey(Cameras.Front) && byCamera[Cameras.Front].Count > 0)
+                if (hasFrontCamera)
                 {
                     var seiTimeline = new List<(double timeSeconds, SeiMetadata message)>();
                     var frontSegments = byCamera[Cameras.Front];
 
                     Log.Information(
-                        "SEI HUD sync: Processing {SegmentCount} front camera segments using MP4 frame timing",
+                        "SEI HUD sync: Processing {SegmentCount} front camera chunks using MP4 frame timing",
                         frontSegments.Count);
+
+                    // Several intervals can land on the same segment file, and neither service caches.
+                    // Both do a full-file read (the SEI one protobuf-decodes every NAL), so memoize per
+                    // job — job-scoped, so there is nothing to invalidate.
+                    var timelineCache = new Dictionary<string, Mp4FrameTimeline>(StringComparer.OrdinalIgnoreCase);
+                    var seiCache = new Dictionary<string, List<SeiMetadata>>(StringComparer.OrdinalIgnoreCase);
 
                     double cumulativeExportSeconds = 0;
                     ulong? lastFrameSeqNo = null;
                     double? lastLat = null, lastLon = null;
                     float? lastSpeed = null;
                     int segmentIndex = 0;
+                    int lastIntervalIndex = -1;
 
                     foreach (var segment in frontSegments)
                     {
-                        // Extract MP4 frame timing metadata
-                        var timeline = await _mp4Timing.GetFrameTimelineAsync(segment.path);
-                        if (timeline == null)
+                        // The accumulator is the chunk's position in the concatenated output, so every exit from this
+                        // body must advance it or all later telemetry lands early. finally makes that structural — a
+                        // future `continue` cannot skip it. ChunkOutputSeconds accounts for ffmpeg emitting whole frames.
+                        try
                         {
-                            Log.Warning("Failed to extract MP4 timing for {Path}, skipping SEI extraction", segment.path);
-                            segmentIndex++;
-                            continue;
-                        }
-
-                        // Extract ALL SEI messages from this segment
-                        var allMessages = _seiParser.ExtractSeiMessages(segment.path);
-                        if (allMessages.Count == 0)
-                        {
-                            Log.Warning("No SEI metadata found in front segment {Path}", segment.path);
-                            segmentIndex++;
-                            continue;
-                        }
-
-                        // Validate timeline matches SEI message count
-                        if (timeline.FrameCount != allMessages.Count)
-                        {
-                            Log.Warning(
-                                "MP4 frame count ({FrameCount}) != SEI message count ({SeiCount}) for {Path}. Using min for safety.",
-                                timeline.FrameCount, allMessages.Count, segment.path);
-
-                            // Trim SEI messages if MP4 has fewer frames
-                            if (timeline.FrameCount < allMessages.Count)
+                            // A seam between intervals is an expected discontinuity, not a fault — drop the
+                            // running continuity state so the diagnostics below stay meaningful.
+                            if (segment.IntervalIndex != lastIntervalIndex)
                             {
-                                allMessages = allMessages.GetRange(0, timeline.FrameCount);
-                            }
-                        }
-
-                        var startMs = segment.start * 1000.0;
-                        var endMs = (segment.start + segment.duration) * 1000.0;
-                        var startFrameIndex = timeline.FindFrameIndexForMs(startMs);
-                        var endFrameIndex = timeline.FindFrameIndexForMs(endMs);
-
-                        if (startFrameIndex < 0 || endFrameIndex < 0)
-                        {
-                            Log.Warning(
-                                "Frame indices not found for SEI extraction: start={StartMs:F2}ms end={EndMs:F2}ms for {Path}",
-                                startMs, endMs, segment.path);
-                            segmentIndex++;
-                            continue;
-                        }
-
-                        startFrameIndex = Math.Max(0, startFrameIndex);
-                        endFrameIndex = Math.Min(
-                            Math.Min(endFrameIndex, timeline.FrameCount - 1),
-                            allMessages.Count - 1);
-
-                        if (endFrameIndex < startFrameIndex)
-                        {
-                            Log.Warning("Invalid frame range for SEI extraction: [{Start}..{End}] for {Path}",
-                                startFrameIndex, endFrameIndex, segment.path);
-                            segmentIndex++;
-                            continue;
-                        }
-
-                        var segmentFrameCount = endFrameIndex - startFrameIndex + 1;
-                        var segmentSeiMessages = allMessages.GetRange(startFrameIndex, segmentFrameCount);
-                        var framesAdded = 0;
-
-                        for (int i = 0; i < segmentSeiMessages.Count; i++)
-                        {
-                            var globalFrameIndex = startFrameIndex + i;
-                            if (globalFrameIndex >= timeline.FrameStartsMs.Length)
-                            {
-                                break;
+                                lastFrameSeqNo = null;
+                                lastLat = null;
+                                lastLon = null;
+                                lastSpeed = null;
+                                lastIntervalIndex = segment.IntervalIndex;
                             }
 
-                            var frameStartMs = timeline.FrameStartsMs[globalFrameIndex];
-                            var exportRelativeSeconds = cumulativeExportSeconds + (Math.Max(0, frameStartMs - startMs) / 1000.0);
-                            seiTimeline.Add((exportRelativeSeconds, segmentSeiMessages[i]));
-                            framesAdded++;
-                        }
-
-                        if (framesAdded != segmentFrameCount)
-                        {
-                            Log.Warning(
-                                "SEI frame mismatch for {Path}: expected {Expected} frames from timeline, added {Added}",
-                                segment.path,
-                                segmentFrameCount,
-                                framesAdded);
-                        }
-
-                        // Diagnostic: Check SEI continuity across segment boundaries
-                        if (segmentSeiMessages.Count > 0)
-                        {
-                            var firstSei = segmentSeiMessages[0];
-                            var lastSei = segmentSeiMessages[segmentSeiMessages.Count - 1];
-
-                            if (lastFrameSeqNo.HasValue)
+                            // Black filler occupies output time but carries no telemetry
+                            if (segment.IsFiller)
                             {
-                                var seqGap = (long)(firstSei.FrameSeqNo - lastFrameSeqNo.Value);
-                                var expectedGap = 1L; // Should increment by 1
+                                continue;
+                            }
 
-                                if (seqGap != expectedGap)
+                            // Extract MP4 frame timing metadata
+                            if (!timelineCache.TryGetValue(segment.Path, out var timeline))
+                            {
+                                timeline = await _mp4Timing.GetFrameTimelineAsync(segment.Path);
+                                timelineCache[segment.Path] = timeline;
+                            }
+
+                            if (timeline == null)
+                            {
+                                Log.Warning("Failed to extract MP4 timing for {Path}, skipping SEI extraction", segment.Path);
+                                continue;
+                            }
+
+                            // Extract ALL SEI messages from this segment
+                            if (!seiCache.TryGetValue(segment.Path, out var allMessages))
+                            {
+                                allMessages = _seiParser.ExtractSeiMessages(segment.Path);
+                                seiCache[segment.Path] = allMessages;
+                            }
+
+                            if (allMessages.Count == 0)
+                            {
+                                Log.Warning("No SEI metadata found in front segment {Path}", segment.Path);
+                                continue;
+                            }
+
+                            // Validate timeline matches SEI message count
+                            if (timeline.FrameCount != allMessages.Count)
+                            {
+                                Log.Warning(
+                                    "MP4 frame count ({FrameCount}) != SEI message count ({SeiCount}) for {Path}. Using min for safety.",
+                                    timeline.FrameCount, allMessages.Count, segment.Path);
+
+                                // Trim SEI messages if MP4 has fewer frames
+                                if (timeline.FrameCount < allMessages.Count)
                                 {
-                                    Log.Warning(
-                                        "SEI boundary discontinuity: Segment {SegmentIndex}, Expected FrameSeqNo={Expected}, Actual={Actual}, Gap={Gap}",
-                                        segmentIndex,
-                                        lastFrameSeqNo.Value + 1,
-                                        firstSei.FrameSeqNo,
-                                        seqGap);
+                                    allMessages = allMessages.GetRange(0, timeline.FrameCount);
+                                }
+                            }
+
+                            var startMs = segment.Start * 1000.0;
+                            var endMs = (segment.Start + segment.Duration) * 1000.0;
+                            var startFrameIndex = timeline.FindFrameIndexForMs(startMs);
+                            var endFrameIndex = timeline.FindFrameIndexForMs(endMs);
+
+                            if (startFrameIndex < 0 || endFrameIndex < 0)
+                            {
+                                Log.Warning(
+                                    "Frame indices not found for SEI extraction: start={StartMs:F2}ms end={EndMs:F2}ms for {Path}",
+                                    startMs, endMs, segment.Path);
+                                continue;
+                            }
+
+                            startFrameIndex = Math.Max(0, startFrameIndex);
+                            endFrameIndex = Math.Min(
+                                Math.Min(endFrameIndex, timeline.FrameCount - 1),
+                                allMessages.Count - 1);
+
+                            if (endFrameIndex < startFrameIndex)
+                            {
+                                Log.Warning("Invalid frame range for SEI extraction: [{Start}..{End}] for {Path}",
+                                    startFrameIndex, endFrameIndex, segment.Path);
+                                continue;
+                            }
+
+                            var segmentFrameCount = endFrameIndex - startFrameIndex + 1;
+                            var segmentSeiMessages = allMessages.GetRange(startFrameIndex, segmentFrameCount);
+                            var framesAdded = 0;
+
+                            for (int i = 0; i < segmentSeiMessages.Count; i++)
+                            {
+                                var globalFrameIndex = startFrameIndex + i;
+                                if (globalFrameIndex >= timeline.FrameStartsMs.Length)
+                                {
+                                    break;
                                 }
 
-                                // Check for backward GPS movement (would indicate wrong SEI data)
-                                if (lastLat.HasValue && lastLon.HasValue)
+                                var frameStartMs = timeline.FrameStartsMs[globalFrameIndex];
+                                var exportRelativeSeconds = cumulativeExportSeconds + (Math.Max(0, frameStartMs - startMs) / 1000.0);
+                                seiTimeline.Add((exportRelativeSeconds, segmentSeiMessages[i]));
+                                framesAdded++;
+                            }
+
+                            if (framesAdded != segmentFrameCount)
+                            {
+                                Log.Warning(
+                                    "SEI frame mismatch for {Path}: expected {Expected} frames from timeline, added {Added}",
+                                    segment.Path,
+                                    segmentFrameCount,
+                                    framesAdded);
+                            }
+
+                            // Diagnostic: Check SEI continuity across segment boundaries
+                            if (segmentSeiMessages.Count > 0)
+                            {
+                                var firstSei = segmentSeiMessages[0];
+                                var lastSei = segmentSeiMessages[segmentSeiMessages.Count - 1];
+
+                                if (lastFrameSeqNo.HasValue)
                                 {
-                                    var latDiff = Math.Abs(firstSei.LatitudeDeg - lastLat.Value);
-                                    var lonDiff = Math.Abs(firstSei.LongitudeDeg - lastLon.Value);
+                                    var seqGap = (long)(firstSei.FrameSeqNo - lastFrameSeqNo.Value);
+                                    var expectedGap = 1L; // Should increment by 1
 
-                                    // Rough distance calculation (degrees to km approximation)
-                                    var distanceKm = Math.Sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111.0;
-
-                                    if (distanceKm > 1.0) // More than 1km jump at boundary
+                                    if (seqGap != expectedGap)
                                     {
                                         Log.Warning(
-                                            "Large GPS jump at boundary: {Distance:F3}km from ({LastLat:F6},{LastLon:F6}) to ({CurrLat:F6},{CurrLon:F6})",
-                                            distanceKm,
-                                            lastLat.Value, lastLon.Value,
-                                            firstSei.LatitudeDeg, firstSei.LongitudeDeg);
+                                            "SEI boundary discontinuity: Segment {SegmentIndex}, Expected FrameSeqNo={Expected}, Actual={Actual}, Gap={Gap}",
+                                            segmentIndex,
+                                            lastFrameSeqNo.Value + 1,
+                                            firstSei.FrameSeqNo,
+                                            seqGap);
+                                    }
+
+                                    // Check for backward GPS movement (would indicate wrong SEI data)
+                                    if (lastLat.HasValue && lastLon.HasValue)
+                                    {
+                                        var latDiff = Math.Abs(firstSei.LatitudeDeg - lastLat.Value);
+                                        var lonDiff = Math.Abs(firstSei.LongitudeDeg - lastLon.Value);
+
+                                        // Rough distance calculation (degrees to km approximation)
+                                        var distanceKm = Math.Sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111.0;
+
+                                        if (distanceKm > 1.0) // More than 1km jump at boundary
+                                        {
+                                            Log.Warning(
+                                                "Large GPS jump at boundary: {Distance:F3}km from ({LastLat:F6},{LastLon:F6}) to ({CurrLat:F6},{CurrLon:F6})",
+                                                distanceKm,
+                                                lastLat.Value, lastLon.Value,
+                                                firstSei.LatitudeDeg, firstSei.LongitudeDeg);
+                                        }
+                                    }
+
+                                    // Check for speed backward jump
+                                    if (lastSpeed.HasValue && firstSei.VehicleSpeedMps < lastSpeed.Value - 5.0f)
+                                    {
+                                        Log.Warning(
+                                            "Speed backward jump at boundary: {LastSpeed:F1} m/s → {CurrSpeed:F1} m/s",
+                                            lastSpeed.Value,
+                                            firstSei.VehicleSpeedMps);
                                     }
                                 }
 
-                                // Check for speed backward jump
-                                if (lastSpeed.HasValue && firstSei.VehicleSpeedMps < lastSpeed.Value - 5.0f)
-                                {
-                                    Log.Warning(
-                                        "Speed backward jump at boundary: {LastSpeed:F1} m/s → {CurrSpeed:F1} m/s",
-                                        lastSpeed.Value,
-                                        firstSei.VehicleSpeedMps);
-                                }
+                                lastFrameSeqNo = lastSei.FrameSeqNo;
+                                lastLat = lastSei.LatitudeDeg;
+                                lastLon = lastSei.LongitudeDeg;
+                                lastSpeed = lastSei.VehicleSpeedMps;
                             }
 
-                            lastFrameSeqNo = lastSei.FrameSeqNo;
-                            lastLat = lastSei.LatitudeDeg;
-                            lastLon = lastSei.LongitudeDeg;
-                            lastSpeed = lastSei.VehicleSpeedMps;
+                            Log.Information(
+                                "SEI segment {SegmentIndex}: File={FileName}, FileRelativeTime=[{Start:F2}s + {Duration:F2}s], ExportPosition={ExportPos:F2}s, SEI extracted={Count}, FrameSeqNo=[{FirstSeq}..{LastSeq}], Speed=[{FirstSpeed:F1}..{LastSpeed:F1}] m/s",
+                                segmentIndex,
+                                Path.GetFileName(segment.Path),
+                                segment.Start,
+                                segment.Duration,
+                                cumulativeExportSeconds,
+                                segmentSeiMessages.Count,
+                                segmentSeiMessages.Count > 0 ? segmentSeiMessages[0].FrameSeqNo : 0,
+                                segmentSeiMessages.Count > 0 ? segmentSeiMessages[segmentSeiMessages.Count - 1].FrameSeqNo : 0,
+                                segmentSeiMessages.Count > 0 ? segmentSeiMessages[0].VehicleSpeedMps : 0,
+                                segmentSeiMessages.Count > 0 ? segmentSeiMessages[segmentSeiMessages.Count - 1].VehicleSpeedMps : 0);
+
                         }
-
-                        Log.Information(
-                            "SEI segment {SegmentIndex}: File={FileName}, FileRelativeTime=[{Start:F2}s + {Duration:F2}s], ExportPosition={ExportPos:F2}s, SEI extracted={Count}, FrameSeqNo=[{FirstSeq}..{LastSeq}], Speed=[{FirstSpeed:F1}..{LastSpeed:F1}] m/s",
-                            segmentIndex,
-                            Path.GetFileName(segment.path),
-                            segment.start,
-                            segment.duration,
-                            cumulativeExportSeconds,
-                            segmentSeiMessages.Count,
-                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[0].FrameSeqNo : 0,
-                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[segmentSeiMessages.Count - 1].FrameSeqNo : 0,
-                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[0].VehicleSpeedMps : 0,
-                            segmentSeiMessages.Count > 0 ? segmentSeiMessages[segmentSeiMessages.Count - 1].VehicleSpeedMps : 0);
-
-                        cumulativeExportSeconds += segment.duration;
-                        segmentIndex++;
+                        finally
+                        {
+                            cumulativeExportSeconds += ExportTiming.ChunkOutputSeconds(segment.Duration, seiFrameRate);
+                            segmentIndex++;
+                        }
                     }
 
                     Log.Information(
@@ -794,7 +896,7 @@ public class ExportService : IExportService
             // Embed metadata: creation_time and simple title/comment with event time
             try
             {
-                var eventTime = clip.Event?.Timestamp ?? request.StartTimeUtc;
+                var eventTime = clip.Event?.Timestamp ?? start;
                 var utc = eventTime.ToUniversalTime().ToString("o");
                 AddArg(argv, "-metadata", "title=TeslaCamPlayer Export");
 
@@ -815,8 +917,6 @@ public class ExportService : IExportService
             catch { }
 
             argv.Add(tempOutputFile);
-
-            var totalSeconds = (end - start).TotalSeconds;
 
             var psi = new ProcessStartInfo("ffmpeg")
             {
@@ -927,6 +1027,22 @@ public class ExportService : IExportService
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// One piece of a camera's output timeline. A null <see cref="Path"/> is a black filler covering
+    /// output time the camera has no footage for.
+    /// </summary>
+    private sealed record Chunk(string Path, double Start, double Duration, int IntervalIndex)
+    {
+        public bool IsFiller => Path == null;
+    }
+
+    // Below ~1 frame a filler is not worth a lavfi source; xstack absorbs the rounding.
+    private static void AddFillerIfGap(List<Chunk> chunks, double gapSeconds, int intervalIndex)
+    {
+        if (gapSeconds > 0.02)
+            chunks.Add(new Chunk(null, 0, gapSeconds, intervalIndex));
     }
 
     private static string CameraLabel(Cameras cam)
